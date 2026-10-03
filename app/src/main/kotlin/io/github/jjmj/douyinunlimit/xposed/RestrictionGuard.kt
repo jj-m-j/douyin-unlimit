@@ -2,12 +2,9 @@ package io.github.jjmj.douyinunlimit.xposed
 
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import io.github.libxposed.api.XposedModule
-import java.lang.reflect.Executable
-import java.lang.reflect.Field
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
@@ -72,34 +69,22 @@ internal object RestrictionGuard {
     private const val IM_BAN_TIPS_LOGIC =
         "com.ss.android.ugc.aweme.im.sdk.module.session.rips.sessionheader.tips.ChatBanTipsLogic"
 
-    /** 业务类名，R8 保留的可读名，跨版本基本不变。 */
-    private const val SEND_STATUS =
-        "com.ss.android.ugc.aweme.im.business.chat.msgcell.common.status.sendstatus.StatusIconWithText"
-
     private const val SAMPLE_LIMIT = 40
-
-    /** 捕获相关的诊断日志条数上限（含「进入」和失败）。 */
-    private const val CAPTURE_LOG_LIMIT = 10
 
     /** 拦下「显示」的次数。有它才能在日志里区分「没命中」和「命中但无效」。 */
     private val blockHits = AtomicInteger(0)
-
-    /** 登记过的控件个数。 */
-    private val captured = AtomicInteger(0)
-
-    /** 进入捕获钩子的次数。用它区分「钩子没触发」和「触发了但抓不到控件」。 */
-    private val enterHits = AtomicInteger(0)
-
-    /** 登记失败的次数，只报前几条，避免刷屏。 */
-    private val captureMissed = AtomicInteger(0)
 
     fun install(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
         hookSystemToast(module, rules)
         for (name in TOAST_CLASSES) hookDuxToast(module, loader, name, rules)
 
         hookImBanTips(module, loader, rules)
-        hookSendStatus(module, loader, rules)
 
+        Diag.log(
+            "tips",
+            "聊天发送失败图标：按 ${Targets.SEND_FAIL_ICON_CLASS} + " +
+                "#0x%08x 压制（由压制层处理）".format(Targets.SEND_FAIL_ICON_ID),
+        )
         Diag.log("tips", "限制提示类 hook 安装完成")
     }
 
@@ -115,7 +100,8 @@ internal object RestrictionGuard {
         runCatching {
             module.hook(show).intercept { chain ->
                 val toast = chain.thisObject as? Toast
-                if (toast != null && rules.hideTips() && rules.shouldBlockToast(textOf(toast))) {
+                // shouldBlockToast 内部已经按各自的开关判断（内置词 → 限制提示；用户词 → 关键词拦截）
+                if (toast != null && rules.shouldBlockToast(textOf(toast))) {
                     return@intercept null
                 }
                 chain.proceed()
@@ -174,7 +160,6 @@ internal object RestrictionGuard {
             if (!takesText(method) || !returnsVoidOrReference(method)) continue
             runCatching {
                 module.hook(method).intercept { chain ->
-                    if (!rules.hideTips()) return@intercept chain.proceed()
                     for (arg in chain.args) {
                         if (arg is CharSequence && rules.shouldBlockToast(arg.toString())) {
                             Diag.log("tips", "拦下吐司：${arg.toString().take(40)}")
@@ -245,113 +230,14 @@ internal object RestrictionGuard {
     }
 
     // ---------------------------------------------------------------- 聊天发送状态
-
-    /**
-     * 结构和设计理由见类注释。要点：
-     *
-     *  - 基类名（`LX/179c`）**不写死**，用 `superclass` 拿
-     *  - 图标 / 文字字段名（`b` / `f`）**不写死**，按类型（`ImageView` / `TextView`）找
-     *  - 不拦任何显示方法：改成**构造时把控件登记进压制表**，之后 VISIBLE 一律变 GONE
-     *
-     * 最后一条尤其重要：它同时覆盖了「基类那条显示路径」和「控件在布局里默认就 VISIBLE」
-     * 这两个之前都漏掉的情况，而且完全不需要方法名。
-     */
-    private fun hookSendStatus(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
-        val sub = Targets.load(loader, SEND_STATUS)
-        if (sub == null) {
-            Diag.log("tips", "找不到 $SEND_STATUS（聊天发送状态）")
-            return
-        }
-
-        val base = sub.superclass
-        Diag.log("tips", "聊天发送状态：${sub.simpleName} extends ${base?.simpleName}")
-
-        // 布局传进来的两个控件。字段名会被混淆，但类型不会。
-        val fields = Targets.fieldsOfType(sub, ImageView::class.java) +
-            Targets.fieldsOfType(sub, TextView::class.java)
-        if (fields.isEmpty()) {
-            Diag.log("tips", "聊天发送状态：没找到 ImageView/TextView 字段，压不住发送状态")
-        } else {
-            Diag.log(
-                "tips",
-                "聊天发送状态：按类型找到 ${fields.size} 个控件字段 " +
-                    fields.joinToString("/") { "${it.type.simpleName}:${it.name}" },
-            )
-        }
-
-        // 1) 构造时登记（最全：这时所有字段都已赋值）
-        for (ctor in Targets.constructorsOf(sub)) {
-            hookCapture(module, ctor, fields, rules, "构造")
-        }
-
-        // 2) 动作方法里也登记一次。万一某个版本连构造方法都挂不上，这里能兜住 ——
-        //    这些方法在每次绑定/重绑时都会走，登记一次就永久生效。
-        for (method in Targets.zeroArgVoidActions(sub)) {
-            hookCapture(module, method, fields, rules, method.name)
-        }
-    }
-
-    /** 挂一个「进入时把控件登记进压制表」的钩子。 */
-    private fun hookCapture(
-        module: XposedModule,
-        target: Executable,
-        fields: List<Field>,
-        rules: RuleSource,
-        label: String,
-    ) {
-        if (fields.isEmpty()) return
-
-        val where = "${target.declaringClass.simpleName}.$label" +
-            "(${target.parameterTypes.joinToString(",") { it.simpleName }})"
-
-        runCatching {
-            module.hook(target).intercept { chain ->
-                val result = chain.proceed()
-
-                // 采样记一行「钩子进来了」。没有它就没法区分
-                // 「这个方法压根没被调用」和「调用了但里面抓不到控件」——
-                // 上一轮就是因为只有后半段的日志，才看不出是哪种。
-                if (enterHits.incrementAndGet() <= CAPTURE_LOG_LIMIT) {
-                    Diag.log("tips", "聊天发送状态：进入 $where")
-                }
-                captureAll(chain.thisObject, fields, rules, where)
-                result
-            }
-            Diag.log("tips", "聊天发送状态：已挂钩 $where")
-        }.onFailure { Diag.log("tips", "聊天发送状态：$where 挂载失败: $it") }
-    }
-
-    private fun captureAll(instance: Any?, fields: List<Field>, rules: RuleSource, where: String) {
-        if (instance == null) {
-            reportOnce("$where：thisObject 为 null，抓不到控件")
-            return
-        }
-
-        for (field in fields) {
-            val value = runCatching { field.get(instance) }.getOrNull()
-            val view = value as? View
-            if (view == null) {
-                reportOnce("$where：字段 ${field.name} 读不到 View（值=$value）")
-                continue
-            }
-            if (!TextHider.markTip(view)) continue
-
-            if (captured.incrementAndGet() <= SAMPLE_LIMIT) {
-                Diag.log(
-                    "tips",
-                    "已登记 ${view.javaClass.simpleName}（${field.name}）—— 显示请求会被压成 GONE",
-                )
-            }
-            // 布局里默认 VISIBLE 的情况：登记的同时直接按掉
-            if (rules.hideTips()) view.visibility = View.GONE
-        }
-    }
-
-    private fun reportOnce(message: String) {
-        if (captureMissed.incrementAndGet() <= CAPTURE_LOG_LIMIT) {
-            Diag.log("tips", "登记失败：$message")
-        }
-    }
+    //
+    // 聊天里那条「发送失败」的红色叹号，**不在这里处理** —— 由 TextHider 的压制层
+    // 按「类名 + 资源 id」拦掉（见 Targets.SEND_FAIL_ICON_ID 里的说明）。
+    //
+    // 曾经试过另一条路：在 StatusIconWithText 构造时按字段类型把控件抓出来登记。
+    // 真机日志否掉了它 —— 那个类的构造方法和 LIZ/LJI 都只有十几个指令，
+    // **会被 ART 内联**，hook 挂上去连「进入」都没有一次（libxposed 文档明确警告过
+    // 「被 inline 的短方法 hook 不会触发」）。所以这条路线直接删掉，不做无用功。
 
     // ---------------------------------------------------------------- 跳过返回值
 

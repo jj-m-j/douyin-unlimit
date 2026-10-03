@@ -1,21 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  「伪装」= 经典的无脸人（礼帽 + 圆框眼镜）。
+
+  全部用描边路径画，线宽统一、端点收圆 —— 缩小到 48dp 也不会糊成一团。
+  内容控制在自适应图标的安全区（约 24..80）内，圆角裁剪不会切到。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 一个被划掉的喇叭：表示「提示被静音」 -->
+
+    <!-- 帽冠 -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M40,46 L50,46 L62,36 L62,72 L50,62 L40,62 Z" />
+        android:pathData="M44,28 L64,28 L73,44 L35,44 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round" />
+
+    <!-- 帽檐 -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4.5"
-        android:strokeLineCap="round"
-        android:pathData="M70,42 L84,66" />
+        android:pathData="M28,50 L80,50"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+
+    <!-- 左镜片 -->
     <path
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4.5"
-        android:strokeLineCap="round"
-        android:pathData="M84,42 L70,66" />
+        android:pathData="M34,68 A9,9 0 1,1 52,68 A9,9 0 1,1 34,68 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6" />
+
+    <!-- 右镜片 -->
+    <path
+        android:pathData="M56,68 A9,9 0 1,1 74,68 A9,9 0 1,1 56,68 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6" />
 </vector>

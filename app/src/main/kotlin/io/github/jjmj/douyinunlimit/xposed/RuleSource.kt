@@ -81,7 +81,7 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
      * 热路径节流同步：每 1024 次调用真正读一次配置。
      *
      * 由 setText 这类必然高频的入口调用一次即可 —— 它同时负责让
-     * [hideTips] / [textHidingOn] 这些缓存标志保持新鲜。
+     * [hideTips] / [keywordHiding] 这些缓存标志保持新鲜。
      */
     fun tick() {
         if (++tick >= TICK_LIMIT) {
@@ -90,11 +90,30 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
         }
     }
 
+    /** 隐藏一切限制提示（吐司 / 横幅 / 发送失败图标 / 服务端下发的限制文案）。 */
+    fun hideTips(): Boolean = hideTipsFlag
+
+    /** 关键词拦截是否生效。没有词表时它本来就是空转的。 */
+    fun keywordHiding(): Boolean = hideTextFlag && keywords.isNotEmpty()
+
     /** 纯扫描：是不是内置限制文案。 */
     fun matchesBuiltin(text: CharSequence): Boolean = matches(Prefs.BUILTIN_BLOCK_WORDS, text)
 
     /** 纯扫描：是不是用户自己填的关键词。 */
     fun matchesKeyword(text: CharSequence): Boolean = matches(keywords, text)
+
+    /**
+     * 吐司文案判定。
+     *
+     * 两个来源，各自受自己的开关控制：
+     *  - 内置限制词 —— 「别提示我被限制了」（默认开）
+     *  - 用户关键词 —— 「关键词拦截」（默认关）
+     */
+    fun shouldBlockToast(text: String): Boolean {
+        if (text.isEmpty()) return false
+        if (hideTipsFlag && matchesBuiltin(text)) return true
+        return keywordHiding() && matchesKeyword(text)
+    }
 
     private fun matches(words: Array<String>, text: CharSequence): Boolean {
         if (text.length < MIN_KEYWORD_LENGTH) return false
@@ -106,22 +125,6 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
     }
 
     // ---------------------------------------------------------------- 冷路径
-
-    /** 吐司文案判定，同样用内置限制词。 */
-    fun shouldBlockToast(text: String): Boolean {
-        if (text.isEmpty()) return false
-        val current = Prefs.BUILTIN_BLOCK_WORDS
-        for (i in current.indices) {
-            if (text.contains(current[i])) return true
-        }
-        return false
-    }
-
-    /** 隐藏一切限制提示（吐司 / 横幅 / 发送状态 / 服务端下发的限制文案）。 */
-    fun hideTips(): Boolean = hideTipsFlag
-
-    /** 关键词兜底是否生效。没有词表时它本来就是空转的。 */
-    fun textHidingOn(): Boolean = hideTextFlag && keywords.isNotEmpty()
 
     /** 点赞被驳回后不回滚。 */
     fun stickyDigg(): Boolean = stickyDiggFlag

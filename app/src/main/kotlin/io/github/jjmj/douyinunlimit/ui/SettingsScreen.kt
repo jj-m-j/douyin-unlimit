@@ -3,6 +3,11 @@ package io.github.jjmj.douyinunlimit.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -96,8 +101,10 @@ fun SettingsScreen() {
                 Card(modifier = Modifier.cardInset()) {
                     BasicComponent(
                         title = if (connected) "已连接 LSPosed" else "未连接 LSPosed",
+                        // 连接上之后不再显示副标题 —— 传 null 而不是空串，
+                        // 否则会在卡片里留出一条空行（summary 是可空的）
                         summary = if (connected) {
-                            ""
+                            null
                         } else {
                             "请在 LSPosed 里启用本模块，再重启本应用"
                         },
@@ -113,26 +120,28 @@ fun SettingsScreen() {
                         checked = settings.hideTips,
                         onCheckedChange = { SettingsBridge.setHideTips(it) },
                         title = "别提示我被限制了",
-                        summary = "吞掉弹窗吐司、消息页顶部横幅、聊天里的红叹号。" +
-                            "按固定的类和形状拦截，内置限制词，不用自己配",
+                        summary = "干掉弹窗吐司、消息页顶部横幅、红叹号。",
                     )
                 }
             }
 
-            // ---------------------------------------------------------- 关键词兜底
+            // ---------------------------------------------------------- 关键词拦截
             item(key = "keywords") {
-                SmallTitle(text = "关键词兜底")
+                SmallTitle(text = "关键词")
                 Card(modifier = Modifier.cardInset()) {
                     SwitchPreference(
                         checked = settings.hideText,
                         onCheckedChange = { SettingsBridge.setHideText(it) },
-                        title = "连页面里写的限制说明也抹掉",
-                        summary = "服务端下发的封禁文案位置不固定，只能按文字匹配。" +
-                            "可能误伤含相同词的正常内容，所以默认关闭、也不预置词表",
+                        title = "关键词拦截",
+                        summary = "拦截含有关键词的吐司或者文案。",
                     )
                 }
-                // 开关关着的时候不显示输入框：没有词表这个功能本来就是空转的
-                if (settings.hideText) {
+                // 开关切换时让输入框带进出动画，而不是突然出现 / 消失
+                AnimatedVisibility(
+                    visible = settings.hideText,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) {
                     TextField(
                         value = keywordDraft,
                         onValueChange = { keywordDraft = it },

@@ -50,6 +50,30 @@ internal object Targets {
     /** 继承链最多往上找几层，防止意外的深继承把开销放大。 */
     private const val MAX_SUPER_DEPTH = 8
 
+    /**
+     * 聊天里那条「发送失败」的红色叹号。
+     *
+     * 真机视图树（用户提供，直接读出来的）：
+     * ```
+     * com.ss.android.ugc.exview.ImImageView{... #7f0ab151 app:id/04_ ...}
+     * ```
+     *
+     * ## 为什么这里必须回到「按资源 id」—— 和别处的原则不冲突
+     *
+     * 别处一律不写死 id，因为这个 id 会随抖音版本重新分配。但这一条没有别的选择：
+     * 它所在的组件（`StatusIconWithText`）里那些方法都只有十几个指令，
+     * **会被 ART 内联**，hook 挂上去也永远不会被调用（libxposed 文档明确警告过这点，
+     * 真机日志也证实了：连「进入」都没有）。而控件本身是聊天 cell 布局里就有的，
+     * 除了 id 和类名没有任何稳定特征。
+     *
+     * 所以这里按「类名 + id」双重匹配，并且安装时会把 id 当前对应什么写进日志 ——
+     * 一旦抖音改了资源分配，日志里能立刻看出来，而不是功能默默失灵。
+     * 重新取值的方法：打开详细日志，点一下那个图标，点击探针会写出它的 `#0x...`。
+     */
+    const val SEND_FAIL_ICON_ID = 0x7f0ab151
+
+    const val SEND_FAIL_ICON_CLASS = "com.ss.android.ugc.exview.ImImageView"
+
     /** 按候选名依次尝试加载，返回第一个成功的。 */
     fun load(loader: ClassLoader, vararg names: String): Class<*>? {
         for (name in names) {

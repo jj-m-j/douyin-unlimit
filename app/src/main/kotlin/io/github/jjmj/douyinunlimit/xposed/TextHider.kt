@@ -76,6 +76,9 @@ internal object TextHider {
 
     private val squashCount = AtomicInteger(0)
 
+    /** 压住发送失败图标的次数。 */
+    private val iconHits = AtomicInteger(0)
+
     fun install(module: XposedModule, rules: RuleSource) {
         hookSetText(module, rules)
         hookSetVisibility(module, rules)
@@ -119,7 +122,7 @@ internal object TextHider {
 
                     // 内置限制词优先：它服务于默认开启的那个开关
                     val byTips = rules.hideTips() && rules.matchesBuiltin(text)
-                    val byKeyword = !byTips && rules.textHidingOn() && rules.matchesKeyword(text)
+                    val byKeyword = !byTips && rules.keywordHiding() && rules.matchesKeyword(text)
 
                     if (byTips) mark(view, FLAG_TIP_TEXT)
                     if (byKeyword) mark(view, FLAG_KEYWORD)
@@ -158,10 +161,23 @@ internal object TextHider {
                 if (requested == View.GONE) return@intercept chain.proceed()
 
                 val view = chain.thisObject as? View ?: return@intercept chain.proceed()
+
+                // 聊天里那条「发送失败」的红色叹号（见 Targets.SEND_FAIL_ICON_ID）。
+                // 先比 int id —— 对绝大多数 View 来说这一步不成立，直接放行，
+                // 只有命中时才去比类名，热路径上几乎零成本。
+                if (view.id == Targets.SEND_FAIL_ICON_ID && rules.hideTips() &&
+                    view.javaClass.name.startsWith(Targets.SEND_FAIL_ICON_CLASS)
+                ) {
+                    if (iconHits.incrementAndGet() <= SQUASH_LOG_LIMIT) {
+                        Diag.log("text", "压住聊天发送失败图标 #0x%08x".format(view.id))
+                    }
+                    return@intercept chain.proceed(arrayOf<Any?>(View.GONE))
+                }
+
                 val flags = hidden[view] ?: return@intercept chain.proceed()
 
                 val allowTips = flags and (FLAG_TIP_ICON or FLAG_TIP_TEXT) != 0 && rules.hideTips()
-                val allowKeyword = flags and FLAG_KEYWORD != 0 && rules.textHidingOn()
+                val allowKeyword = flags and FLAG_KEYWORD != 0 && rules.keywordHiding()
                 if (!allowTips && !allowKeyword) return@intercept chain.proceed()
 
                 if (squashCount.incrementAndGet() <= SQUASH_LOG_LIMIT) {
