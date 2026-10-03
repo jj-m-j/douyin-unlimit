@@ -53,10 +53,16 @@ internal object ToastGuard {
     /** 系统 Toast 的文案可能挂在 getText() 上，也可能藏在 setView() 进来的自定义布局里。 */
     private fun textOf(toast: Toast): String {
         val out = StringBuilder()
-        runCatching { toast.text?.let { out.append(it) } }
+        runCatching { toastTextOf(toast)?.let { out.append(it) } }
         runCatching { toast.view?.let { collectText(it, out) } }
         return out.toString()
     }
+
+    /** Toast#getText() 在 SDK stub 里不是公开 API，走反射拿。 */
+    private fun toastTextOf(toast: Toast): CharSequence? =
+        runCatching {
+            Toast::class.java.getMethod("getText").invoke(toast) as? CharSequence
+        }.getOrNull()
 
     private fun collectText(view: View, out: StringBuilder) {
         when (view) {

@@ -31,6 +31,11 @@ fun SettingsScreen() {
     val settings = SettingsBridge.settings
     val connected = SettingsBridge.serviceConnected
 
+    // 必须提到 LazyColumn 外面：item {} 各自是独立作用域，跨 item 引用会编译不过
+    var draft by remember(settings.toastKeywords) {
+        mutableStateOf(TextFieldValue(Keywords.encode(settings.toastKeywords)))
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(title = "抖音伪装", subtitle = "v$VERSION")
@@ -76,9 +81,6 @@ fun SettingsScreen() {
 
             item(key = "keywords-title") { SmallTitle("关键词") }
             item(key = "keywords") {
-                var draft by remember(settings.toastKeywords) {
-                    mutableStateOf(TextFieldValue(Keywords.encode(settings.toastKeywords)))
-                }
                 Card {
                     TextField(
                         value = draft,
