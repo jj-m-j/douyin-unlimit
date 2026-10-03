@@ -106,7 +106,7 @@ internal object LocalDigg {
                         // 用「两次按下」的间隔判定——这正是 Android GestureDetector 的做法，
                         // 比用抬手更可靠（抬手可能被父容器截走）
                         pendingDoubleTap = gap < DOUBLE_TAP_WINDOW_MS
-                        Diag.debug("digg", "视频区域 ACTION_DOWN，距上次 ${gap}ms，疑似双击=$pendingDouble")
+                        Diag.debug("digg", "视频区域 ACTION_DOWN，距上次 ${gap}ms，疑似双击=$pendingDoubleTap")
                         chain.proceed()
                     }
 
