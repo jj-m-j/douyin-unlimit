@@ -18,10 +18,11 @@ class HookEntry : XposedModule() {
 
     override fun onModuleLoaded(param: XposedModuleInterface.ModuleLoadedParam) {
         prefs = runCatching { getRemotePreferences(Prefs.GROUP) }.getOrNull()
-        log(Log.INFO, TAG, "loaded, process=${param.processName}, prefs=${prefs != null}")
+        Diag.log("onModuleLoaded 进程=${param.processName} prefs=${prefs != null}")
     }
 
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
+        Diag.log("onPackageReady 触发，包名=${param.packageName}")
         if (param.packageName != TARGET_PACKAGE) return
 
         val rules = RuleSource(prefs)
@@ -36,6 +37,8 @@ class HookEntry : XposedModule() {
         install("text") { TextGuard.install(this, rules) }
         install("view") { ViewGuard.install(this, rules) }
         install("net") { NetGuard.install(this, param.classLoader, rules) }
+
+        Diag.log("onPackageReady 全部完成")
     }
 
     /**
