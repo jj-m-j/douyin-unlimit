@@ -1,5 +1,6 @@
 package io.github.jjmj.douyinunlimit.xposed
 
+import android.util.Log
 import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Modifier
 
@@ -36,7 +37,11 @@ internal object ImBanGuard {
     private val VISIBILITY_METHOD_NAMES = listOf("LJLLLLLL")
 
     fun install(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
-        val clazz = runCatching { Class.forName(TIPS_LOGIC, false, loader) }.getOrNull() ?: return
+        val clazz = runCatching { Class.forName(TIPS_LOGIC, false, loader) }.getOrNull()
+        if (clazz == null) {
+            module.log(Log.WARN, TAG, "ImBanGuard: 找不到 $TIPS_LOGIC（抖音版本可能变了）")
+            return
+        }
 
         val named = VISIBILITY_METHOD_NAMES.mapNotNull { name ->
             clazz.declaredMethods.firstOrNull { it.name == name && it.parameterCount == 0 }
@@ -52,13 +57,24 @@ internal object ImBanGuard {
             }
         }
 
+        val hooked = mutableListOf<String>()
         for (method in targets) {
             runCatching {
                 module.hook(method).intercept { chain ->
                     if (rules.hideImBanTips()) return@intercept null
                     chain.proceed()
                 }
+                hooked += method.name
             }
         }
+        module.log(
+            Log.INFO,
+            TAG,
+            if (hooked.isEmpty()) {
+                "ImBanGuard: 类找到了但没有可挂的方法"
+            } else {
+                "ImBanGuard hooked: ${hooked.joinToString(" | ")}"
+            },
+        )
     }
 }

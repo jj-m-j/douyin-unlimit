@@ -76,11 +76,15 @@ jobs:
           set -e
           APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n1)
           echo "APK: $APK"
+          echo "--- 体积 ---"
+          ls -l "$APK" | awk '{printf "apk total: %.2f MB\n", $5/1048576}'
+          unzip -l "$APK" | grep -E "classes.*\.dex" | awk '{printf "%-20s %.2f MB\n", $4, $1/1048576}'
           echo "--- xposed 元数据 ---"
           unzip -l "$APK" | grep -E 'META-INF/xposed/' || (echo "缺少 xposed 元数据！" && exit 1)
+          echo "--- 入口类与清单 ---"
+          unzip -p "$APK" META-INF/xposed/java_init.list
           echo "--- 签名 ---"
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n1)
-          echo "apksigner=$APKSIGNER"
           "$APKSIGNER" verify --print-certs "$APK"
 
       - name: Upload artifact

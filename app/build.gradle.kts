@@ -16,8 +16,8 @@ android {
         applicationId = "io.github.jjmj.douyinunlimit"
         minSdk = 29
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
     }
 
     val keystorePath = System.getenv("SIGNING_STORE_FILE")
@@ -36,10 +36,35 @@ android {
 
     buildTypes {
         release {
-            // 模块大量依赖反射 hook，关掉 R8 以免类名/方法被裁剪
-            optimization.enable = false
+            // 之前这里是 false，理由是「反射 hook 怕被裁剪」——但那是错的：
+            // 我们反射的是抖音的类（DuxToastV2 / ChatBanTipsLogic），R8 管不到别人的 APK。
+            // 自己代码里唯一必须保命的是入口类 HookEntry（java_init.list 按全名加载），
+            // proguard-rules.pro 里 keep 一行就够了。关掉 R8 白送 20MB。
+            optimization.enable = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             vcsInfo.include = false
             signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    packaging {
+        // dex 默认不压缩（便于 mmap）。这是个设置页小 App，压一下能省一大截体积。
+        dex {
+            useLegacyPackaging = true
+        }
+        resources {
+            excludes += setOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                "/META-INF/DEPENDENCIES",
+                "/META-INF/LICENSE*",
+                "/META-INF/NOTICE*",
+                "/META-INF/*.version",
+                "kotlin/**",
+                "DebugProbesKt.bin",
+            )
         }
     }
 
