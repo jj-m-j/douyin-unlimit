@@ -24,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.7.2"
+private const val VERSION = "1.8.0"
 
 /**
  * Miuix 的排版约定（来自官方 example）：
@@ -148,8 +148,8 @@ fun SettingsScreen() {
                     SwitchPreference(
                         checked = settings.blockDiggUpload,
                         onCheckedChange = { SettingsBridge.setBlockDiggUpload(it) },
-                        title = "拦截点赞上传",
-                        summary = "点赞请求不发到服务器，本地状态就不会被回滚",
+                        title = "本地点赞",
+                        summary = "点击图标直接变红并 +1，不经过抖音接口（滑走再回来会还原）",
                     )
                 }
             }
