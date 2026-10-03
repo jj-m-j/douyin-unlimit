@@ -53,6 +53,9 @@ internal object LocalDigg {
     private const val DIGG_WIDGET = "com.ss.android.ugc.aweme.feed.ui.VideoDiggView"
     private const val DIGG_ICON_CLASS = "com.ss.android.ugc.aweme.feed.widget.DiggAnimationView"
 
+    /** 视频的触摸层，点击探针里见过它（id 0x7f0a6d2e）。 */
+    private const val GESTURE_HOST = "com.ss.android.ugc.aweme.feed.ui.LongPressLayout"
+
     private const val DOUBLE_CLICK_KEY = "handle_double_click"
 
     private const val SAMPLE_LIMIT = 60
@@ -60,8 +63,83 @@ internal object LocalDigg {
 
     fun install(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
         installClickEntry(module, rules)
-        installDoubleTapEntry(module, loader, rules)
+        installDoubleTapByEvent(module, loader, rules)
+        installDoubleTapByGesture(module, loader, rules)
     }
+
+    // ---------------------------------------------------------------- 入口三：直接数双击
+
+    /**
+     * 不依赖任何事件名，自己在视频区域的触摸事件里数双击。
+     *
+     * `LongPressLayout` 是视频的触摸层（点击探针里见过它，id 0x7f0a6d2e），
+     * 两次 ACTION_UP 落在 350ms 内就当作双击：
+     * 本地化点赞，并**吞掉第二次 UP**，让抖音自己的手势检测拿不到这次抬手，
+     * 从而不触发它的双击点赞请求。
+     */
+    private fun installDoubleTapByGesture(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
+        val gestureHost = runCatching { Class.forName(GESTURE_HOST, false, loader) }.getOrNull()
+        if (gestureHost == null) {
+            Diag.log("digg", "入口三：找不到 $GESTURE_HOST")
+            return
+        }
+
+        val onTouch = gestureHost.declaredMethods.firstOrNull { it.name == "onTouchEvent" }
+        if (onTouch == null) {
+            Diag.log("digg", "入口三：$GESTURE_HOST 没有 onTouchEvent")
+            return
+        }
+
+        runCatching {
+            module.hook(onTouch).intercept { chain ->
+                if (!rules.blockDiggUpload()) return@intercept chain.proceed()
+
+                val host = chain.thisObject as? View ?: return@intercept chain.proceed()
+                val event = chain.args.getOrNull(0) as? MotionEvent ?: return@intercept chain.proceed()
+                if (event.actionMasked != MotionEvent.ACTION_UP) return@intercept chain.proceed()
+
+                val now = System.currentTimeMillis()
+                val isDouble = now - lastVideoTapAt < DOUBLE_TAP_WINDOW_MS
+                lastVideoTapAt = now
+                Diag.debug("digg", "视频区域 ACTION_UP，距上次 ${now - (now - lastVideoTapAt)}ms，双击=$isDouble")
+
+                if (!isDouble) return@intercept chain.proceed()
+
+                val button = findLikeButtonInSameItem(host)
+                if (button != null) {
+                    val icon = findIconInButton(button)
+                    val count = findSiblingCount(button)
+                    applyLocalLike(icon, count)
+                    Diag.log("digg", "双击屏幕点赞已本地化")
+                } else {
+                    Diag.log("digg", "双击识别到了，但没找到同一项里的点赞按钮")
+                }
+                // 吞掉这次抬手，抖音的手势检测看不到它，双击点赞请求不会发出
+                true
+            }
+            Diag.log("digg", "入口三就绪：$GESTURE_HOST.onTouchEvent（自己在触摸层数双击）")
+        }.onFailure {
+            Diag.log("digg", "入口三挂载失败: $it")
+        }
+    }
+
+    private var lastVideoTapAt = 0L
+    private const val DOUBLE_TAP_WINDOW_MS = 350L
+
+    /** 从视频触摸层往上找同一项里的点赞按钮。 */
+    private fun findLikeButtonInSameItem(from: View): View? {
+        var parent: View? = from.parent as? View
+        var level = 0
+        while (parent != null && level < MAX_UP_LEVELS) {
+            val found = parent.findViewById<View>(LIKE_BUTTON_ID)
+            if (found != null) return found
+            parent = parent.parent as? View
+            level++
+        }
+        return null
+    }
+
+    private const val MAX_UP_LEVELS = 16
 
     // ---------------------------------------------------------------- 入口一：点击图标
 
@@ -155,6 +233,7 @@ internal object LocalDigg {
 
                     val event = chain.args.firstOrNull()
                     val key = readEventKey(event)
+                    Diag.debug("digg", "VideoDiggView 收到事件 key=$key")
                     if (key == DOUBLE_CLICK_KEY) {
                         val widgetInstance = chain.thisObject
                         if (widgetInstance != null) {
@@ -254,9 +333,16 @@ internal object LocalDigg {
                     entry.invoke(icon, icon, true)
                 }
                 true
+            }.onFailure {
+                // 上一版这里没有日志，异常被静默吞掉，表现为「退化成了兜底动画」却查不出原因
+                Diag.debug("digg", "调抖音动画入口 ${animationEntry?.name} 失败：${it.javaClass.simpleName}: ${it.message}")
             }.getOrDefault(false)
 
-            if (played) return
+            if (played) {
+                Diag.debug("digg", "已调用抖音原生点赞动画")
+                return
+            }
+        }
         }
         bounce(icon)
     }
