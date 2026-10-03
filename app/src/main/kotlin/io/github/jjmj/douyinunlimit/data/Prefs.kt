@@ -3,27 +3,46 @@ package io.github.jjmj.douyinunlimit.data
 /**
  * 模块 App 与注入进程共用的配置约定。
  * 键值通过 libxposed 的远程 SharedPreferences 传输，group 名必须两边一致。
+ *
+ * ## 为什么只有四个开关
+ *
+ * v1.13 之前有七个开关，其中四个其实在描述同一件事（「抖音在告诉我我被限制了」），
+ * 只是实现落在代码的不同层：
+ *
+ *   弹窗吐司   -> DUX Toast 体系
+ *   消息页横幅 -> ChatBanTipsLogic
+ *   聊天红叹号 -> StatusIconWithText
+ *   散落文案   -> 按运行时文字关键词匹配
+ *
+ * 用户想消掉的是「现象」，不是「实现」。前三者按固定的类/接口精准拦截，零误伤风险，
+ * 合成一个开关；第四个靠文字匹配、有误伤可能，所以单独留着让用户能关掉。
  */
 object Prefs {
     const val GROUP = "settings"
 
-    // 吐司
-    const val KEY_BLOCK_TOAST = "block_toast"
-    const val KEY_TOAST_KEYWORDS = "toast_keywords"
+    /** 隐藏一切限制提示：吐司 + 消息页横幅 + 聊天发送状态。 */
+    const val KEY_HIDE_TIPS = "hide_tips"
 
-    // 界面元素
-    const val KEY_HIDE_IM_BAN_TIPS = "hide_im_ban_tips"
-    const val KEY_HIDE_SEND_STATUS = "hide_send_status"
+    /** 按关键词抹掉页面上的文字（兜底层，有误伤风险）。 */
     const val KEY_HIDE_TEXT = "hide_text"
+
+    /** 关键词表，吐司和文字共用。每行一条。 */
+    const val KEY_KEYWORDS = "keywords"
+
+    /** 点赞被服务端驳回后，不回滚本地的已赞状态。 */
     const val KEY_STICKY_DIGG = "sticky_digg"
 
-    // 调试
+    /** 详细调试日志。 */
     const val KEY_DEBUG_LOG = "debug_log"
-    const val KEY_HIDE_VIEWS = "hide_views"
-    const val KEY_HIDE_VIEW_IDS = "hide_view_ids"
 
-    /** 默认拦截关键词：命中任意一条即静默该吐司。 */
-    val DEFAULT_TOAST_KEYWORDS = listOf(
+    /**
+     * 旧键名。v1.13 之前「屏蔽限制类弹窗」和「抹掉带关键词的文字」各自持有一份词表，
+     * 现在合并成一份。读一次旧值，避免升级后用户自己维护的词表被重置成默认。
+     */
+    const val LEGACY_KEY_KEYWORDS = "toast_keywords"
+
+    /** 默认关键词：命中任意一条即隐藏该文字 / 静默该吐司。 */
+    val DEFAULT_KEYWORDS = listOf(
         "封禁",
         "已被限制",
         "被限制",
@@ -38,46 +57,10 @@ object Keywords {
 
     /** 每行一个关键词。null 表示从未写过配置，回退到默认值。 */
     fun parse(raw: String?): List<String> {
-        if (raw == null) return Prefs.DEFAULT_TOAST_KEYWORDS
+        if (raw == null) return Prefs.DEFAULT_KEYWORDS
         return raw.split(SEPARATOR).map { it.trim() }.filter { it.isNotEmpty() }
     }
 
     fun encode(list: List<String>): String =
         list.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(SEPARATOR)
-}
-
-/**
- * 要隐藏的控件 id。
- *
- * 这些 id 来自 Layout Inspect，是 aapt 在打包时分配的，**抖音升级后可能变化**，
- * 所以做成可编辑列表。输入接受 `0x7f0ab151`、`7f0ab151`（按十六进制解析）或十进制。
- */
-object ViewIds {
-    /** 0x7f0ab151: 聊天里的发送状态图标（红感叹号，ImImageView）。已验证有效。 */
-    const val SEND_STATUS_ICON = 0x7f0ab151
-
-    /**
-     * 默认留空。
-     *
-     * 原来这里放着聊天的发送状态图标 0x7f0ab151，但那是**和「隐藏聊天里的封禁提示」
-     * 重复**的——两者指向同一个控件（StatusIconWithText 的图标）。
-     * 按类名 hook（SendStatusGuard）不依赖资源 id、抖音升级也不受影响，所以留下它，
-     * 这里清空。这个列表只作为「找不到合适类名、只能点名」时的兜底工具。
-     */
-    val DEFAULT: List<Int> = emptyList()
-
-    private const val SEPARATOR = "\n"
-
-    fun parse(raw: String?): List<Int> {
-        if (raw == null) return DEFAULT
-        return raw.split(SEPARATOR).mapNotNull { line ->
-            val text = line.trim()
-            if (text.isEmpty()) return@mapNotNull null
-            val body = text.removePrefix("0x").removePrefix("0X")
-            body.toLongOrNull(16)?.toInt() ?: text.toIntOrNull()
-        }.distinct()
-    }
-
-    fun encode(ids: Collection<Int>): String =
-        ids.distinct().joinToString(SEPARATOR) { "0x%08x".format(it) }
 }

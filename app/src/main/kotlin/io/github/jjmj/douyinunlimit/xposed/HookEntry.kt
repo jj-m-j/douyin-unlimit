@@ -2,7 +2,6 @@ package io.github.jjmj.douyinunlimit.xposed
 
 import android.app.Application
 import android.content.SharedPreferences
-import android.util.Log
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
 import io.github.jjmj.douyinunlimit.data.Prefs
@@ -47,12 +46,8 @@ class HookEntry : XposedModule() {
         // 也用来在正确的时机初始化日志文件（onPackageReady 时 Application 还没创建）
         install("application") { hookApplicationReady(this) }
 
-        install("toast") { ToastGuard.install(this, param.classLoader, rules) }
-        install("im ban tips") { ImBanGuard.install(this, param.classLoader, rules) }
-        install("send status") { SendStatusGuard.install(this, param.classLoader, rules) }
-        install("text") { TextGuard.install(this, rules) }
-        install("view") { ViewGuard.install(this, rules) }
-        install("net") { NetGuard.install(this, param.classLoader, rules) }
+        install("restriction tips") { RestrictionGuard.install(this, param.classLoader, rules) }
+        install("text") { TextHider.install(this, rules) }
         install("local digg") { LocalDigg.install(this, param.classLoader, rules) }
         install("click probe") { ClickProbe.install(this, rules) }
 
@@ -87,7 +82,6 @@ class HookEntry : XposedModule() {
     }
 
     private companion object {
-        const val TAG = "DouyinUnlimit"
         const val TARGET_PACKAGE = "com.ss.android.ugc.aweme"
     }
 }

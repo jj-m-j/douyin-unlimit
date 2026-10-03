@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -14,7 +15,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import io.github.jjmj.douyinunlimit.data.Keywords
 import io.github.jjmj.douyinunlimit.data.SettingsBridge
-import io.github.jjmj.douyinunlimit.data.ViewIds
+import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -24,7 +25,10 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.13.0"
+private const val VERSION = "1.14.0"
+
+/** 关键词改完停顿多久后自动落盘。 */
+private const val AUTOSAVE_DELAY_MS = 600L
 
 /** 卡片统一的内缩与块间距，Miuix 规范是横向 12dp。 */
 private fun Modifier.cardInset() = this
@@ -32,13 +36,12 @@ private fun Modifier.cardInset() = this
     .padding(bottom = 12.dp)
 
 /**
- * 分组按「你看到什么被干掉」来分，而不是按代码里的 Guard 分：
+ * 分组按「你看到什么被干掉」来分，不是按代码里的 Guard 分。
  *
- *   限制提示   —— 各类封禁文案的开关
- *   点赞       —— 点赞相关
- *   关键词     —— 吐司和文字共用的一份词表
- *   进阶       —— 需要手动填 id 的兜底手段
- *   调试 / 关于
+ * v1.13 有七个开关，其中四个在描述同一件事——「抖音在告诉我我被限制了」，
+ * 只是实现落在不同层（吐司 / 横幅 / 红叹号 / 散落文案）。用户想消掉的是现象不是实现，
+ * 所以前三者（按固定类精准拦截、零误伤）合成一个开关；第四个靠文字匹配、可能误伤
+ * 正常内容，单独留着让用户能单独关掉。
  */
 @Composable
 fun SettingsScreen() {
@@ -46,11 +49,16 @@ fun SettingsScreen() {
     val connected = SettingsBridge.serviceConnected
 
     // 必须放在 LazyColumn 外面：item {} 各自是独立作用域
-    var keywordDraft by remember(settings.toastKeywords) {
-        mutableStateOf(TextFieldValue(Keywords.encode(settings.toastKeywords)))
+    var keywordDraft by remember(settings.keywords) {
+        mutableStateOf(TextFieldValue(Keywords.encode(settings.keywords)))
     }
-    var idDraft by remember(settings.hideViewIds) {
-        mutableStateOf(TextFieldValue(ViewIds.encode(settings.hideViewIds)))
+
+    // 自动保存：用户停止输入 600ms 后写一次，省掉一个「保存」按钮。
+    // 写成比较后再存，避免刚进入页面 / 刚同步完就把同样的内容再写一遍。
+    LaunchedEffect(keywordDraft.text) {
+        if (keywordDraft.text == Keywords.encode(settings.keywords)) return@LaunchedEffect
+        delay(AUTOSAVE_DELAY_MS)
+        SettingsBridge.setKeywords(Keywords.parse(keywordDraft.text))
     }
 
     Scaffold(
@@ -85,28 +93,42 @@ fun SettingsScreen() {
                 SmallTitle(text = "限制提示")
                 Card(modifier = Modifier.cardInset()) {
                     SwitchPreference(
-                        checked = settings.blockToast,
-                        onCheckedChange = { SettingsBridge.setBlockToast(it) },
-                        title = "屏蔽限制类弹窗",
-                        summary = "「点赞功能已封禁」这类一闪而过的提示，直接不弹",
+                        checked = settings.hideTips,
+                        onCheckedChange = { SettingsBridge.setHideTips(it) },
+                        title = "别提示我被限制了",
+                        summary = "吞掉弹窗吐司、消息页顶部横幅、聊天里的红叹号。" +
+                            "按固定的类拦截，不会误伤别的内容",
                     )
-                    SwitchPreference(
-                        checked = settings.hideImBanTips,
-                        onCheckedChange = { SettingsBridge.setHideImBanTips(it) },
-                        title = "去掉消息页顶部横幅",
-                        summary = "「消息发送功能已被禁止使用」那条横条",
-                    )
-                    SwitchPreference(
-                        checked = settings.hideSendStatus,
-                        onCheckedChange = { SettingsBridge.setHideSendStatus(it) },
-                        title = "去掉聊天里的红叹号",
-                        summary = "消息发送失败时，气泡左边那个红色感叹号",
-                    )
+                }
+            }
+
+            // ---------------------------------------------------------- 关键词兜底
+            item(key = "keywords") {
+                SmallTitle(text = "关键词兜底")
+                Card(modifier = Modifier.cardInset()) {
                     SwitchPreference(
                         checked = settings.hideText,
                         onCheckedChange = { SettingsBridge.setHideText(it) },
-                        title = "抹掉带关键词的文字",
-                        summary = "含下面关键词的文案整段隐藏，比如被封禁的理由",
+                        title = "连页面里写的限制说明也抹掉",
+                        summary = "服务端下发的封禁文案位置不固定，只能按文字匹配。" +
+                            "可能误伤含相同词的正常内容，所以单独一个开关",
+                    )
+                }
+                TextField(
+                    value = keywordDraft,
+                    onValueChange = { keywordDraft = it },
+                    label = "命中任意一条就隐藏，每行一条（自动保存）",
+                    useLabelAsPlaceholder = true,
+                    singleLine = false,
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp),
+                )
+                Card(modifier = Modifier.cardInset()) {
+                    ArrowPreference(
+                        title = "恢复默认关键词",
+                        summary = "弹窗和文字共用这一份词表",
+                        onClick = { SettingsBridge.resetKeywords() },
                     )
                 }
             }
@@ -116,72 +138,16 @@ fun SettingsScreen() {
                 SmallTitle(text = "点赞")
                 Card(modifier = Modifier.cardInset()) {
                     SwitchPreference(
-                        checked = settings.blockDiggUpload,
-                        onCheckedChange = { SettingsBridge.setBlockDiggUpload(it) },
-                        title = "点赞只在本地生效",
-                        summary = "点图标、双击屏幕都能点亮，请求不发出去，服务端也就驳不回",
+                        checked = settings.stickyDigg,
+                        onCheckedChange = { SettingsBridge.setStickyDigg(it) },
+                        title = "点赞被驳回也不回滚",
+                        summary = "点击和双击都按原生走（动画、特效都在），只在服务端驳回、" +
+                            "抖音要撤销点赞的那一刻把它按住",
                     )
-                }
-            }
-
-            // ---------------------------------------------------------- 关键词
-            item(key = "keywords") {
-                SmallTitle(text = "关键词")
-                TextField(
-                    value = keywordDraft,
-                    onValueChange = { keywordDraft = it },
-                    label = "每行一条",
-                    useLabelAsPlaceholder = true,
-                    singleLine = false,
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp)
-                        .padding(bottom = 12.dp),
-                )
-                Card(modifier = Modifier.cardInset()) {
-                    ArrowPreference(
-                        title = "保存关键词",
-                        summary = "「屏蔽限制类弹窗」和「抹掉带关键词的文字」共用这一份",
-                        onClick = {
-                            SettingsBridge.setToastKeywords(Keywords.parse(keywordDraft.text))
-                        },
-                    )
-                    ArrowPreference(
-                        title = "恢复默认",
-                        onClick = { SettingsBridge.resetToastKeywords() },
-                    )
-                }
-            }
-
-            // ---------------------------------------------------------- 进阶
-            item(key = "advanced") {
-                SmallTitle(text = "进阶")
-                Card(modifier = Modifier.cardInset()) {
-                    SwitchPreference(
-                        checked = settings.hideViews,
-                        onCheckedChange = { SettingsBridge.setHideViews(it) },
-                        title = "按控件 id 隐藏",
-                        summary = "兜底手段：用 Layout Inspect 抓到 id 后填在下面，精确点名某个控件",
-                    )
-                }
-                TextField(
-                    value = idDraft,
-                    onValueChange = { idDraft = it },
-                    label = "每行一个，如 0x7f0a309c",
-                    useLabelAsPlaceholder = true,
-                    singleLine = false,
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp)
-                        .padding(bottom = 12.dp),
-                )
-                Card(modifier = Modifier.cardInset()) {
-                    ArrowPreference(
-                        title = "保存控件 id",
-                        summary = "同一个 id 可能被别的界面复用，加之前先确认清楚",
-                        onClick = { SettingsBridge.setHideViewIds(ViewIds.parse(idDraft.text)) },
-                    )
-                    ArrowPreference(
-                        title = "恢复默认",
-                        onClick = { SettingsBridge.resetHideViewIds() },
+                    BasicComponent(
+                        title = "它做不到什么",
+                        summary = "服务端确实没接受这次点赞。下拉刷新或换一批视频之后，" +
+                            "图标会按服务端数据恢复，这是改不掉的",
                     )
                 }
             }
@@ -194,7 +160,7 @@ fun SettingsScreen() {
                         checked = settings.debugLog,
                         onCheckedChange = { SettingsBridge.setDebugLog(it) },
                         title = "记录详细日志",
-                        summary = "会记录每次点击的控件和祖先链，平时关掉省电",
+                        summary = "记录每次点击的控件和祖先链、点赞链路的每一步，平时关掉省电",
                     )
                 }
             }
@@ -205,13 +171,13 @@ fun SettingsScreen() {
                 Card(modifier = Modifier.cardInset()) {
                     BasicComponent(
                         title = "它做了什么",
-                        summary = "只改抖音客户端本地的显示和点击行为，不碰任何服务端状态，" +
-                            "也不修改账号本身。",
+                        summary = "只改抖音客户端本地的显示和交互，不碰任何服务端状态，" +
+                            "也不修改账号本身",
                     )
                     BasicComponent(
                         title = "为什么有时会失效",
-                        summary = "抖音更新后控件 id 和类名可能变化；打开「记录详细日志」，" +
-                            "日志文件在 /storage/emulated/0/Android/data/" +
+                        summary = "抖音更新后类名和方法名可能变化。打开「记录详细日志」，" +
+                            "日志在 /storage/emulated/0/Android/data/" +
                             "com.ss.android.ugc.aweme/files/unlimit-diag.log",
                     )
                 }
