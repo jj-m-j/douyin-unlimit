@@ -12,11 +12,18 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * 诊断日志。
  *
- * ## 两级日志
+ * ## 默认关闭，一行都不写
  *
- *  - [log]   基础日志：安装结果、错误、关键命中。始终写入（有总量上限）。
- *  - [debug] 详细日志：每次点击的控件类名/id/祖先链、每个请求 URL、字段定位过程等。
- *            只有用户在模块里打开「详细调试日志」才会写，避免平时白耗电。
+ * 用户没有主动打开「记录详细日志」时，这里**不落盘、不写 logcat**：不做任何 I/O，
+ * 不占空间也不耗电。日志是排障工具，不该是常驻开销。
+ *
+ * 但「装上了没」这件事必须留证据，否则打开开关之前发生的安装过程就永久丢失了
+ * （用户要看到的正是「哪个 hook 没挂上」）。所以在关闭状态下日志只进**内存环形缓冲**
+ * （有上限），等开关打开的那一刻一次性补写进文件。这样：
+ *
+ *   - 关闭时：零 I/O
+ *   - 打开开关后不重启：立刻拿到本次会话从头开始的完整日志
+ *   - 打开开关后重启：安装阶段就直写文件
  *
  * ## 只追加，永不截断
  *
@@ -24,10 +31,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * 多次 `Application.onCreate`，后一次会把前面的日志全抹掉（表现为「文件里只剩两行」）。
  * 现在纯追加，每次会话写带进程名的分隔行，谁也盖不掉谁。
  *
- * ## 缓冲
+ * ## 为什么必须有自建通道
  *
- * guard 在 `onPackageReady` 安装，那时 `Application` 还没创建、拿不到 Context，
- * 解析不出文件路径。早期日志先存内存，等 Application 就绪再落盘，启动顺序完整可见。
+ * `XposedModule.log()` 既不进 logcat 也不进文件（走框架自己的日志通道）。
+ * 所有诊断都必须走这里，否则会出现「hook 明明挂上了但日志里什么都没有」的假象。
  *
  * 文件位置（MT 用 root 可直接打开）：
  *   /storage/emulated/0/Android/data/com.ss.android.ugc.aweme/files/unlimit-diag.log
@@ -36,12 +43,19 @@ internal object Diag {
 
     const val TAG = "DouyinUnlimit"
 
-    private const val LIMIT = 1500
-    private const val PENDING_MAX = 300
+    /** 单次会话最多写多少行，防止刷屏把文件撑爆。 */
+    private const val LIMIT = 2000
+
+    /** 关闭状态下内存里最多留多少行。 */
+    private const val BUFFER_MAX = 400
+
     private const val FILE_NAME = "unlimit-diag.log"
 
     private val total = AtomicInteger(0)
     private val pending = ArrayDeque<String>()
+
+    @Volatile
+    private var hasPending = false
 
     @Volatile
     private var file: File? = null
@@ -49,7 +63,7 @@ internal object Diag {
     @Volatile
     private var processTag: String? = null
 
-    /** 由 HookEntry 注入：问一下「详细调试日志」开着没。 */
+    /** 由 HookEntry 注入：问一下「记录详细日志」开着没。 */
     @Volatile
     private var verboseProvider: (() -> Boolean)? = null
 
@@ -57,45 +71,78 @@ internal object Diag {
         verboseProvider = provider
     }
 
-    /** 进程就绪时调用：追加一条分隔行，并把之前缓冲的日志落盘。 */
+    /** 日志总开关。打开时顺带把攒着的日志补写进文件。 */
+    private fun verbose(): Boolean {
+        val on = verboseProvider?.invoke() == true
+        if (on) flush()
+        return on
+    }
+
+    /** 会话分隔行：进程名 + 时间，多进程下谁也盖不掉谁。 */
     fun startSession(label: String) {
-        val target = resolve() ?: return
-        val tag = processTag()
-        runCatching {
-            target.parentFile?.mkdirs()
-            target.appendText("\n===== $label | $tag @ ${now()} =====\n")
-            synchronized(pending) {
-                while (pending.isNotEmpty()) {
-                    target.appendText("${now()} $tag ${pending.removeFirst()}\n")
-                }
-            }
+        val line = "===== $label | ${processTag()} @ ${now()} ====="
+        if (!verbose()) {
+            remember(line)
+            return
         }
-        Log.i(TAG, "diag file: ${target.absolutePath} ($tag)")
+        runCatching {
+            val target = resolve() ?: return remember(line)
+            target.parentFile?.mkdirs()
+            target.appendText("\n$line\n")
+        }
     }
 
-    /** 基础日志：始终记录。 */
-    fun log(key: String, message: String) = write(key, message)
+    /** 基础日志：安装结果、错误、关键命中。 */
+    fun log(key: String, message: String) = emit(key, message)
 
-    fun log(message: String) = write("diag", message)
+    fun log(message: String) = emit("diag", message)
 
-    /** 详细日志：只有开启「详细调试日志」才写。 */
-    fun debug(key: String, message: String) {
-        if (verboseProvider?.invoke() == true) write("$key*", message)
-    }
+    /** 详细日志：每次点击的控件、点赞链路每一步等高频内容。 */
+    fun debug(key: String, message: String) = emit("$key*", message)
 
-    private fun write(key: String, message: String) {
-        if (total.incrementAndGet() > LIMIT) return
+    private fun emit(key: String, message: String) {
         val line = "[$key] $message"
-        Log.i(TAG, "$processTag() $line")
+
+        if (!verbose()) {
+            remember(line)
+            return
+        }
+
+        if (total.incrementAndGet() > LIMIT) return
+        Log.i(TAG, "${processTag()} $line")
 
         val target = resolve()
         if (target == null) {
-            synchronized(pending) {
-                if (pending.size < PENDING_MAX) pending.addLast(line)
-            }
+            remember(line)
             return
         }
         runCatching { target.appendText("${now()} ${processTag()} $line\n") }
+    }
+
+    // ---------------------------------------------------------------- 内存缓冲
+
+    private fun remember(line: String) {
+        synchronized(pending) {
+            while (pending.size >= BUFFER_MAX) pending.removeFirst()
+            pending.addLast(line)
+            hasPending = true
+        }
+    }
+
+    /** 把缓冲里的日志补写进文件。稳态下 `hasPending` 为 false，几乎零开销。 */
+    private fun flush() {
+        if (!hasPending) return
+        val target = resolve() ?: return
+
+        runCatching {
+            target.parentFile?.mkdirs()
+            synchronized(pending) {
+                // 先全写完再清空：写失败时宁可下次重复，也不要丢日志
+                for (line in pending) target.appendText("${now()} ${processTag()} $line\n")
+                pending.clear()
+                hasPending = false
+            }
+        }
     }
 
     /** 只有成功才缓存；失败留到下次重试（早期解析失败不能缓存，否则日志永远丢失）。 */

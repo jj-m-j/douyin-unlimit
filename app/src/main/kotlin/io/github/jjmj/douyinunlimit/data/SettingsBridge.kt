@@ -45,25 +45,21 @@ object SettingsBridge {
         val p = prefs ?: return
         settings = ModuleSettings(
             hideTips = p.getBoolean(Prefs.KEY_HIDE_TIPS, true),
-            hideText = p.getBoolean(Prefs.KEY_HIDE_TEXT, true),
-            keywords = Keywords.parse(readKeywords(p)),
+            hideText = p.getBoolean(Prefs.KEY_HIDE_TEXT, false),
+            keywords = Keywords.parse(p.getString(Prefs.KEY_KEYWORDS, null)),
             stickyDigg = p.getBoolean(Prefs.KEY_STICKY_DIGG, true),
             debugLog = p.getBoolean(Prefs.KEY_DEBUG_LOG, false),
         )
     }
 
-    /** 新键优先，其次读旧的合并前的键名。 */
-    private fun readKeywords(p: SharedPreferences): String? =
-        p.getString(Prefs.KEY_KEYWORDS, null) ?: p.getString(Prefs.LEGACY_KEY_KEYWORDS, null)
-
     fun setHideTips(value: Boolean) {
         settings = settings.copy(hideTips = value)
-        prefs?.edit()?.putBoolean(Prefs.KEY_HIDE_TIPS, value)?.apply()
+        put(Prefs.KEY_HIDE_TIPS, value)
     }
 
     fun setHideText(value: Boolean) {
         settings = settings.copy(hideText = value)
-        prefs?.edit()?.putBoolean(Prefs.KEY_HIDE_TEXT, value)?.apply()
+        put(Prefs.KEY_HIDE_TEXT, value)
     }
 
     fun setKeywords(value: List<String>) {
@@ -71,15 +67,17 @@ object SettingsBridge {
         prefs?.edit()?.putString(Prefs.KEY_KEYWORDS, Keywords.encode(value))?.apply()
     }
 
-    fun resetKeywords() = setKeywords(Prefs.DEFAULT_KEYWORDS)
-
     fun setStickyDigg(value: Boolean) {
         settings = settings.copy(stickyDigg = value)
-        prefs?.edit()?.putBoolean(Prefs.KEY_STICKY_DIGG, value)?.apply()
+        put(Prefs.KEY_STICKY_DIGG, value)
     }
 
     fun setDebugLog(value: Boolean) {
         settings = settings.copy(debugLog = value)
-        prefs?.edit()?.putBoolean(Prefs.KEY_DEBUG_LOG, value)?.apply()
+        put(Prefs.KEY_DEBUG_LOG, value)
+    }
+
+    private fun put(key: String, value: Boolean) {
+        prefs?.edit()?.putBoolean(key, value)?.apply()
     }
 }

@@ -114,7 +114,7 @@ fun SettingsScreen() {
                         onCheckedChange = { SettingsBridge.setHideTips(it) },
                         title = "别提示我被限制了",
                         summary = "吞掉弹窗吐司、消息页顶部横幅、聊天里的红叹号。" +
-                            "按固定的类拦截，不会误伤别的内容",
+                            "按固定的类和形状拦截，内置限制词，不用自己配",
                     )
                 }
             }
@@ -128,24 +128,20 @@ fun SettingsScreen() {
                         onCheckedChange = { SettingsBridge.setHideText(it) },
                         title = "连页面里写的限制说明也抹掉",
                         summary = "服务端下发的封禁文案位置不固定，只能按文字匹配。" +
-                            "可能误伤含相同词的正常内容，所以单独一个开关",
+                            "可能误伤含相同词的正常内容，所以默认关闭、也不预置词表",
                     )
                 }
-                TextField(
-                    value = keywordDraft,
-                    onValueChange = { keywordDraft = it },
-                    label = "命中任意一条就隐藏，每行一条（自动保存）",
-                    useLabelAsPlaceholder = true,
-                    singleLine = false,
-                    modifier = Modifier
-                        .padding(horizontal = 12.dp)
-                        .padding(bottom = 12.dp),
-                )
-                Card(modifier = Modifier.cardInset()) {
-                    ArrowPreference(
-                        title = "恢复默认关键词",
-                        summary = "弹窗和文字共用这一份词表",
-                        onClick = { SettingsBridge.resetKeywords() },
+                // 开关关着的时候不显示输入框：没有词表这个功能本来就是空转的
+                if (settings.hideText) {
+                    TextField(
+                        value = keywordDraft,
+                        onValueChange = { keywordDraft = it },
+                        label = "填要抹掉的字，每行一条（自动保存）",
+                        useLabelAsPlaceholder = true,
+                        singleLine = false,
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp)
+                            .padding(bottom = 12.dp),
                     )
                 }
             }
