@@ -100,9 +100,10 @@ internal object LocalDigg {
                 if (event.actionMasked != MotionEvent.ACTION_UP) return@intercept chain.proceed()
 
                 val now = System.currentTimeMillis()
-                val isDouble = now - lastVideoTapAt < DOUBLE_TAP_WINDOW_MS
+                val gap = now - lastVideoTapAt
+                val isDouble = gap < DOUBLE_TAP_WINDOW_MS
                 lastVideoTapAt = now
-                Diag.debug("digg", "视频区域 ACTION_UP，距上次 ${now - (now - lastVideoTapAt)}ms，双击=$isDouble")
+                Diag.debug("digg", "视频区域 ACTION_UP，距上次 ${gap}ms，双击=$isDouble")
 
                 if (!isDouble) return@intercept chain.proceed()
 
@@ -343,7 +344,6 @@ internal object LocalDigg {
                 Diag.debug("digg", "已调用抖音原生点赞动画")
                 return
             }
-        }
         }
         bounce(icon)
     }
