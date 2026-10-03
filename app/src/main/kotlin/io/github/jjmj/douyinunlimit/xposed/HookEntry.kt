@@ -41,7 +41,7 @@ class HookEntry : XposedModule() {
         install("text") { TextGuard.install(this, rules) }
         install("view") { ViewGuard.install(this, rules) }
         install("net") { NetGuard.install(this, param.classLoader, rules) }
-        install("local digg") { LocalDigg.install(this, rules) }
+        install("local digg") { LocalDigg.install(this, param.classLoader, rules) }
         install("click probe") { ClickProbe.install(this, rules) }
 
         Diag.log("onPackageReady 全部完成")
