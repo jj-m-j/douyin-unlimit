@@ -52,6 +52,7 @@ object SettingsBridge {
             hideViews = p.getBoolean(Prefs.KEY_HIDE_VIEWS, true),
             hideViewIds = ViewIds.parse(p.getString(Prefs.KEY_HIDE_VIEW_IDS, null)),
             blockDiggUpload = p.getBoolean(Prefs.KEY_STICKY_DIGG, true),
+            debugLog = p.getBoolean(Prefs.KEY_DEBUG_LOG, false),
         )
     }
 
@@ -93,6 +94,11 @@ object SettingsBridge {
     }
 
     fun resetHideViewIds() = setHideViewIds(ViewIds.DEFAULT)
+
+    fun setDebugLog(value: Boolean) {
+        settings = settings.copy(debugLog = value)
+        putBoolean(Prefs.KEY_DEBUG_LOG, value)
+    }
 
     fun setBlockDiggUpload(value: Boolean) {
         settings = settings.copy(blockDiggUpload = value)

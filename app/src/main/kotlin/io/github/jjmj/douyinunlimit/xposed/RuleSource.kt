@@ -126,6 +126,24 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
     /** 拦截点赞请求上传。 */
     fun blockDiggUpload(): Boolean = blockDiggFlag
 
+    /**
+     * 「详细调试日志」开关。
+     * 点击探针等高频路径会问它，所以做 2 秒节流，避免每次都读 prefs。
+     */
+    fun debugLog(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastDebugCheck >= DEBUG_CHECK_INTERVAL_MS) {
+            lastDebugCheck = now
+            debugFlag = flag(Prefs.KEY_DEBUG_LOG, false)
+        }
+        return debugFlag
+    }
+
+    @Volatile
+    private var debugFlag: Boolean = false
+
+    private var lastDebugCheck: Long = 0L
+
     private fun flag(key: String, default: Boolean): Boolean =
         runCatching { prefs?.getBoolean(key, default) }.getOrNull() ?: default
 
@@ -133,5 +151,6 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
         /** 2^10 - 1 */
         const val TICK_MASK = 0x3FF
         const val MIN_KEYWORD_LENGTH = 2
+        const val DEBUG_CHECK_INTERVAL_MS = 2000L
     }
 }

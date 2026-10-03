@@ -24,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.8.1"
+private const val VERSION = "1.9.0"
 
 /**
  * Miuix 的排版约定（来自官方 example）：
@@ -197,6 +197,22 @@ fun SettingsScreen() {
                     ArrowPreference(
                         title = "恢复默认",
                         onClick = { SettingsBridge.resetToastKeywords() },
+                    )
+                }
+            }
+
+            item(key = "debug") {
+                SmallTitle(text = "调试")
+                Card(
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp),
+                ) {
+                    SwitchPreference(
+                        checked = settings.debugLog,
+                        onCheckedChange = { SettingsBridge.setDebugLog(it) },
+                        title = "详细调试日志",
+                        summary = "记录每次点击的控件类名/id/祖先链。平时关掉省电，排查问题时再开",
                     )
                 }
             }

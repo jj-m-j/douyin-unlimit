@@ -16,8 +16,8 @@ android {
         applicationId = "io.github.jjmj.douyinunlimit"
         minSdk = 29
         targetSdk = 37
-        versionCode = 15
-        versionName = "1.8.1"
+        versionCode = 16
+        versionName = "1.9.0"
     }
 
     val keystorePath = System.getenv("SIGNING_STORE_FILE")

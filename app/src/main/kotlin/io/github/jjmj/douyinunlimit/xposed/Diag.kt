@@ -12,22 +12,22 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * 诊断日志。
  *
+ * ## 两级日志
+ *
+ *  - [log]   基础日志：安装结果、错误、关键命中。始终写入（有总量上限）。
+ *  - [debug] 详细日志：每次点击的控件类名/id/祖先链、每个请求 URL、字段定位过程等。
+ *            只有用户在模块里打开「详细调试日志」才会写，避免平时白耗电。
+ *
  * ## 只追加，永不截断
  *
- * 上一版 `startSession` 用 `writeText` 写文件头，等于**把文件清空重写**。
- * 抖音有多个进程，加上 Hive 插件框架可能触发不止一次 `Application.onCreate`，
- * 后一次就会把前面所有进程的日志抹掉——表现就是「文件里只剩最后两行」。
- * 现在改成纯追加，并且每次会话写一条带**进程名**的分隔行，谁也盖不掉谁。
+ * 早期版本用 `writeText` 写文件头 = 清空重写，而抖音多进程 + Hive 插件框架会触发
+ * 多次 `Application.onCreate`，后一次会把前面的日志全抹掉（表现为「文件里只剩两行」）。
+ * 现在纯追加，每次会话写带进程名的分隔行，谁也盖不掉谁。
  *
- * ## 为什么要缓冲
+ * ## 缓冲
  *
- * guard 在 `onPackageReady` 里安装，那时 `Application` 还没创建、拿不到 Context，
- * 解析不出文件路径。所以文件不可用时的日志先存内存，等 Application 就绪再落盘，
- * 这样启动阶段的完整顺序都能保留。
- *
- * ## 为什么不用 XposedModule.log
- *
- * 那个走框架自己的通道，既不进 logcat 也不进文件。所有诊断必须走本类。
+ * guard 在 `onPackageReady` 安装，那时 `Application` 还没创建、拿不到 Context，
+ * 解析不出文件路径。早期日志先存内存，等 Application 就绪再落盘，启动顺序完整可见。
  *
  * 文件位置（MT 用 root 可直接打开）：
  *   /storage/emulated/0/Android/data/com.ss.android.ugc.aweme/files/unlimit-diag.log
@@ -36,7 +36,7 @@ internal object Diag {
 
     const val TAG = "DouyinUnlimit"
 
-    private const val LIMIT = 800
+    private const val LIMIT = 1500
     private const val PENDING_MAX = 300
     private const val FILE_NAME = "unlimit-diag.log"
 
@@ -48,6 +48,14 @@ internal object Diag {
 
     @Volatile
     private var processTag: String? = null
+
+    /** 由 HookEntry 注入：问一下「详细调试日志」开着没。 */
+    @Volatile
+    private var verboseProvider: (() -> Boolean)? = null
+
+    fun setVerboseProvider(provider: () -> Boolean) {
+        verboseProvider = provider
+    }
 
     /** 进程就绪时调用：追加一条分隔行，并把之前缓冲的日志落盘。 */
     fun startSession(label: String) {
@@ -65,7 +73,17 @@ internal object Diag {
         Log.i(TAG, "diag file: ${target.absolutePath} ($tag)")
     }
 
-    fun log(key: String, message: String) {
+    /** 基础日志：始终记录。 */
+    fun log(key: String, message: String) = write(key, message)
+
+    fun log(message: String) = write("diag", message)
+
+    /** 详细日志：只有开启「详细调试日志」才写。 */
+    fun debug(key: String, message: String) {
+        if (verboseProvider?.invoke() == true) write("$key*", message)
+    }
+
+    private fun write(key: String, message: String) {
         if (total.incrementAndGet() > LIMIT) return
         val line = "[$key] $message"
         Log.i(TAG, "$processTag() $line")
@@ -79,8 +97,6 @@ internal object Diag {
         }
         runCatching { target.appendText("${now()} ${processTag()} $line\n") }
     }
-
-    fun log(message: String) = log("diag", message)
 
     /** 只有成功才缓存；失败留到下次重试（早期解析失败不能缓存，否则日志永远丢失）。 */
     private fun resolve(): File? {
@@ -104,7 +120,6 @@ internal object Diag {
                 .getMethod("currentProcessName")
                 .invoke(null) as? String
         }.getOrNull() ?: "?"
-        // com.ss.android.ugc.aweme:push -> :push
         val short = name.substringAfterLast(':').takeIf { name.contains(':') } ?: name
         val result = "[${short.ifEmpty { "main" }}]"
         processTag = result

@@ -9,4 +9,5 @@ data class ModuleSettings(
     val hideViews: Boolean = true,
     val hideViewIds: List<Int> = ViewIds.DEFAULT,
     val blockDiggUpload: Boolean = true,
+    val debugLog: Boolean = false,
 )

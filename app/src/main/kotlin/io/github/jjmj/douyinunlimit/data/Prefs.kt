@@ -16,6 +16,9 @@ object Prefs {
     const val KEY_HIDE_SEND_STATUS = "hide_send_status"
     const val KEY_HIDE_TEXT = "hide_text"
     const val KEY_STICKY_DIGG = "sticky_digg"
+
+    // 调试
+    const val KEY_DEBUG_LOG = "debug_log"
     const val KEY_HIDE_VIEWS = "hide_views"
     const val KEY_HIDE_VIEW_IDS = "hide_view_ids"
 

@@ -27,6 +27,10 @@ class HookEntry : XposedModule() {
 
         val rules = RuleSource(prefs)
 
+        // 详细调试日志的开关交给 Diag 查询（热路径，RuleSource 内部有 2 秒节流）
+        Diag.setVerboseProvider { rules.debugLog() }
+        Diag.log("debug", "详细调试日志 = ${rules.debugLog()}")
+
         // Application.onCreate 必定触发一次：既作为「模块确实注入了」的铁证，
         // 也用来在正确的时机初始化日志文件（onPackageReady 时 Application 还没创建）
         install("application") { hookApplicationReady(this) }
@@ -38,6 +42,7 @@ class HookEntry : XposedModule() {
         install("view") { ViewGuard.install(this, rules) }
         install("net") { NetGuard.install(this, param.classLoader, rules) }
         install("local digg") { LocalDigg.install(this, param.classLoader, rules) }
+        install("click probe") { ClickProbe.install(this, rules) }
 
         Diag.log("onPackageReady 全部完成")
     }

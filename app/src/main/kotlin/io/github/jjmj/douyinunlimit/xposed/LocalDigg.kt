@@ -1,120 +1,140 @@
 package io.github.jjmj.douyinunlimit.xposed
 
 import android.view.View
-import android.view.ViewParent
 import android.widget.TextView
 import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Field
+import java.lang.reflect.Modifier
 
 /**
  * 完全由模块实现的本地点赞：不经过抖音任何接口。
  *
- * ## 为什么不在网络层拦
+ * ## 走过的弯路（都记下来，避免以后再踩）
  *
- * 真机日志已证明：`OkHttpClient.newCall` 和 `SsHttpCall.enqueue` 都成功挂上了，
- * 但整轮使用中**零请求经过它们**——抖音的 API 走 TTNet（Cronet 原生栈），
- * 请求在 native 层构建，Java 侧既拦不到也没有 URL。这条路是封死的。
+ * 1. **网络层**：`OkHttpClient.newCall` 和 `SsHttpCall.enqueue` 都成功挂上了，真机实测
+ *    整轮使用**零请求经过它们**——抖音 API 走 TTNet（Cronet 原生栈），Java 侧拦不到。
+ * 2. **`DiggAnimationView.onTouchEvent`**：挂上了但从未被调用。那是点赞*动画*的载体，
+ *    不是能点的按钮。
+ * 3. **`View.performClick` + 找 `VideoDiggView` 祖先**：也从未命中。
+ *    原因：`VideoDiggView extends AsyncBaseVideoItemView`，**它本身不是 View**，
+ *    而是包着 View 的控制器，所以它不可能出现在任何视图的祖先链里。
  *
- * ## 为什么挂在 View.performClick
+ * ## 现在挂在哪
  *
- * 上一版挂在 `DiggAnimationView.onTouchEvent` 上，实测**从未被调用**——
- * 那个类是点赞动画的载体，真正被点击的是外面包着它的容器。
+ * 点睛之笔是不写死任何混淆名，全部运行时推导：
  *
- * 逆向确认点赞按钮的实现：
+ *   1. 从 `VideoDiggView` 的字段里，找出那个类型实现了 `View.OnClickListener` 的字段
+ *      （smali 里是 `K:LY/ACListenerS197S0100000_38;`），拿到它的**运行时类型**
+ *   2. 挂这个类型所有 `onClick*` 方法
+ *   3. 每次触发时判断：这个 lambda 捕获的对象是不是 `VideoDiggView` 实例
+ *      （R8 的 lambda 类会把捕获对象存在 `l0` 这类字段里）
+ *      —— 是，就说明用户点的是点赞
+ *   4. 由模块直接改图标选中态 + 点赞数，然后**不调用原方法**（吞掉）
+ *      → 抖音的点赞逻辑不执行 → 请求不发 → 服务端无从驳回 → 没有回滚
  *
- *   com.ss.android.ugc.aweme.feed.ui.VideoDiggView
- *     s : DiggAnimationView     // 图标
- *     t : TextView              // 点赞数
- *     K : ACListenerS...        // 点击监听器
- *
- *     LJJIIJ(Aweme, Map, Z, Z)  // "update_diig_view" -> ImageView.setSelected(...)  ← 变红
- *     LJJIFFI(J, Aweme, Z, Z)   // "digg_count_state" -> TextView.setText(...)      ← 数字
- *
- * `View.performClick()` 是框架方法、名字永不被混淆，而且所有点击都会经过它。
- * 从被点击的视图往上找 `VideoDiggView` 祖先，命中就说明用户点的是点赞：
- *
- *   1. 自己改图标选中态 + 点赞数，**然后 return true 吞掉事件**
- *   2. 抖音的监听器不会执行 -> 请求不会发出 -> 服务端无从驳回 -> 没有回滚
- *
- * 字段不按名字取、按**类型**取（DiggAnimationView / TextView），这样即使
- * 混淆后的字段名变了也照样能找到。
+ * 这样即使抖音改名（`ACListenerS...` 后面那串数字、`onClick$56` 的编号、
+ * `DiggAnimationView` 字段名）也照样能工作。
  *
  * ## 已知限制
  *
- * 抖音的数据模型仍是「未点赞」，所以视图被 RecyclerView 回收重绑后，
- * 抖音会按模型把图标刷回未点赞——滑走再滑回来，本地点赞会丢。
+ * 抖音的数据模型仍是「未点赞」，视图被 RecyclerView 回收重绑后图标会还原
+ * —— 滑走再滑回来，本地点赞会丢。
  */
 internal object LocalDigg {
 
     private const val DIGG_WIDGET = "com.ss.android.ugc.aweme.feed.ui.VideoDiggView"
     private const val DIGG_ICON = "com.ss.android.ugc.aweme.feed.widget.DiggAnimationView"
     private const val TEXT_VIEW = "android.widget.TextView"
-
-    private const val MAX_UP_LEVELS = 16
-
-    // ---- 反射句柄，首次命中时解析一次 ----
-    @Volatile
-    private var widgetClass: Class<*>? = null
-
-    @Volatile
-    private var resolved = false
-
-    private var iconField: Field? = null
-    private var countField: Field? = null
+    private const val ON_CLICK_LISTENER = "android.view.View\$OnClickListener"
 
     private const val SAMPLE_LIMIT = 40
     private var sampleCount = 0
 
     fun install(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
-        widgetClass = runCatching { Class.forName(DIGG_WIDGET, false, loader) }.getOrNull()
+        val widgetClass = runCatching { Class.forName(DIGG_WIDGET, false, loader) }.getOrNull()
         if (widgetClass == null) {
             Diag.log("digg", "找不到 $DIGG_WIDGET")
             return
         }
 
-        val performClick = runCatching { View::class.java.getDeclaredMethod("performClick") }.getOrNull()
-        if (performClick == null) {
-            Diag.log("digg", "找不到 View.performClick")
+        val listenerInterface = runCatching { Class.forName(ON_CLICK_LISTENER, false, loader) }.getOrNull()
+        if (listenerInterface == null) {
+            Diag.log("digg", "找不到 $ON_CLICK_LISTENER")
             return
         }
 
-        runCatching {
-            module.hook(performClick).intercept { chain ->
-                val view = chain.thisObject as? View ?: return@intercept chain.proceed()
+        // 运行时推导：点击监听器到底被混淆成了哪个类
+        val listenerClass = widgetClass.declaredFields
+            .map { it.type }
+            .firstOrNull { listenerInterface.isAssignableFrom(it) && it != listenerInterface }
 
-                if (rules.blockDiggUpload()) {
-                    val widget = findDiggWidget(view)
-                    if (widget != null) {
-                        applyLocalLike(widget)
-                        // 吞掉：抖音的点击监听器不执行，点赞请求不会发出
-                        return@intercept true
+        if (listenerClass == null) {
+            Diag.log("digg", "$DIGG_WIDGET 里没有找到 OnClickListener 类型的字段")
+            return
+        }
+
+        val targets = listenerClass.declaredMethods.filter { it.name.startsWith("onClick") }
+        if (targets.isEmpty()) {
+            Diag.log("digg", "${listenerClass.name} 里没有 onClick 方法")
+            return
+        }
+
+        var hooked = 0
+        for (method in targets) {
+            runCatching {
+                module.hook(method).intercept { chain ->
+                    if (!rules.blockDiggUpload()) return@intercept chain.proceed()
+
+                    val lambda = chain.thisObject ?: chain.args.firstOrNull()
+                    val captured = capturedObject(lambda)
+                    if (captured != null && captured.javaClass === widgetClass) {
+                        applyLocalLike(captured)
+                        // 吞掉：抖音自己的点赞逻辑不执行，请求不会发出
+                        return@intercept null
                     }
+
+                    chain.proceed()
                 }
-
-                chain.proceed()
+                hooked++
             }
-            Diag.log("digg", "已挂钩 View.performClick（识别 $DIGG_WIDGET 并拦截为纯本地）")
-        }.onFailure {
-            Diag.log("digg", "LocalDigg 挂载失败: $it")
         }
+
+        Diag.log(
+            "digg",
+            if (hooked == 0) {
+                "点赞监听器方法一个都没挂上（${listenerClass.name}）"
+            } else {
+                "已挂钩点赞监听器 ${listenerClass.name} 的 $hooked 个 onClick* 方法（拦截为纯本地）"
+            },
+        )
     }
 
-    /** 从被点击的视图往上找点赞容器。 */
-    private fun findDiggWidget(from: View): Any? {
-        val target = widgetClass ?: return null
-        var parent: ViewParent? = from.parent
-        var level = 0
-        while (parent is View && level < MAX_UP_LEVELS) {
-            if (parent.javaClass === target) return parent
-            parent = parent.parent
-            level++
-        }
-        return null
+    /** R8 的 lambda 类会把捕获对象存在 `l0` 这类字段里；取第一个非静态引用字段。 */
+    private fun capturedObject(lambda: Any?): Any? {
+        if (lambda == null) return null
+        return runCatching {
+            val field = lambda.javaClass.declaredFields.firstOrNull {
+                !Modifier.isStatic(it.modifiers) && !it.type.isPrimitive
+            } ?: return null
+            field.isAccessible = true
+            field.get(lambda)
+        }.getOrNull()
     }
+
+    // ---- VideoDiggView 的字段：按类型取，混淆改名也不影响 ----
+
+    @Volatile
+    private var iconField: Field? = null
+
+    @Volatile
+    private var countField: Field? = null
+
+    @Volatile
+    private var fieldsResolved = false
 
     private fun resolveFields(widget: Any) {
-        if (resolved) return
-        resolved = true
+        if (fieldsResolved) return
+        fieldsResolved = true
         val cls = widget.javaClass
         iconField = cls.declaredFields
             .firstOrNull { it.type.name == DIGG_ICON }
@@ -133,7 +153,7 @@ internal object LocalDigg {
 
         val icon = runCatching { iconField?.get(widget) as? View }.getOrNull()
         if (icon == null) {
-            Diag.log("digg", "拿不到点赞图标字段")
+            Diag.log("digg", "拿不到点赞图标")
             return
         }
 
@@ -148,10 +168,7 @@ internal object LocalDigg {
         }
 
         if (sampleCount++ < SAMPLE_LIMIT) {
-            Diag.log(
-                "digg",
-                "本地点赞 liked=$liked，点赞数 $before -> ${count?.text ?: "控件未定位"}",
-            )
+            Diag.log("digg", "本地点赞 liked=$liked，点赞数 $before -> ${count?.text ?: "控件未定位"}")
         }
     }
 
