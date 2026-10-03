@@ -34,7 +34,7 @@ jobs:
           echo "sdkmanager=$SDKMANAGER"
           test -n "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
+          "$SDKMANAGER" "platforms;android-37.2" "build-tools;37.0.0"
           {
             echo "ANDROID_HOME=$SDK"
             echo "ANDROID_SDK_ROOT=$SDK"
@@ -79,7 +79,9 @@ jobs:
           echo "--- xposed 元数据 ---"
           unzip -l "$APK" | grep -E 'META-INF/xposed/' || (echo "缺少 xposed 元数据！" && exit 1)
           echo "--- 签名 ---"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK"
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n1)
+          echo "apksigner=$APKSIGNER"
+          "$APKSIGNER" verify --print-certs "$APK"
           echo "=== APK=$APK" >> "$GITHUB_ENV"
 
       - name: Upload artifact
