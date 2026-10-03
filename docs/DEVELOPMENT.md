@@ -13,7 +13,7 @@
 > |---|---|---|
 > | §6.1 | DUX 吐司两条显示分支从 `LIZJ` 一个方法分叉 | `LIZJ` 是 **static** 的「造系统吐司」函数（参数第一个是 `DuxToastV2` 自己）；自绘浮层走的是另一个方法 `LIZLLL`（`makeShowCustomToast`）。**收口点不止一个**，所以改成按「参数含 `CharSequence`/`String`」泛化扫描 |
 > | §6.2 | 让 `ChatBanTipsLogic.LJLLLLLL()` 空操作即可 | `LJLLLLLL` 只是**判定**；真正把横幅挂上去的是 `LJJJLZIJ()`（内含 `im_message_block_notice_show` 埋点）。两个都要拦 |
-> | §6.3 | 只拦 `StatusIconWithText.LIZ/LJI` 即可 | 图标只有**基类** `LX/179c.LIZ()` 能显示，`LJI()` 完全不碰图标；而且那个 ImageView 在 cell 布局里**可能默认就 VISIBLE**，还必须按实例把 VISIBLE 请求压成 GONE（这正是旧版按资源 id 压制在干的活，删掉就漏了） |
+> | §6.3 | 只拦 `StatusIconWithText.LIZ/LJI`，或按实例登记 | 图标只有基类能显示，而且**短方法会被 ART 内联**，hook 挂上去也不会被调用（真机日志连「进入」都没有）。最终改回**按「类名 + 资源 id」在压制层匹配**，见 §6.3 |
 > | §7.5 | 驳回回滚走 `VideoDiggView.onEventDiggUpdate` | 那是**跨页面同步**用的 EventBus 广播。回滚走 `FeedDiggPresenter.LJJJJZ(Exception)`，见 §7.5 |
 >
 > 后两条的失败方式最有代表性：
@@ -452,50 +452,67 @@ LJLLL()                                                          // 隐藏
 `ChatBanTipsUI`（渲染）：`a` = DuxImageView（0x7f0a5e36，铃铛），
 `b` = DuxTextView（0x7f0ac401，文字）—— 真机 Layout Inspect 核对过。
 
-### 6.3 聊天里的红叹号 / 发送状态
+### 6.3 聊天里的红叹号 / 发送失败图标
+
+**真机视图树（用户用布局查看器直接读出来的）**：
 
 ```
-LX/179c （基类，发送状态指示）
-  b: ImageView                                     // 状态图标（红叹号）
-  LIZ()V     -> b.setImageResource + b.setContentDescription
-                + b.setVisibility(VISIBLE)         ★ 图标唯一的显示点
-  LIZLLL()V  -> b.setVisibility(GONE)              // 隐藏
-  LIZIZ/LIZJ -> throw NPE（留给子类实现的占位）
-
-StatusIconWithText extends LX/179c    f: DmtTextView（说明文字）
-  LIZ()V  -> invoke-super LIZ()（显示图标）+ 设置并显示 f      ★ 显示
-  LJI()V  -> 只动 f，**完全不碰图标**
-  LIZJ()V -> 把图标和文字都藏起来，再调 LJI()
-  LIZLLL()V -> super.LIZLLL() + f.setVisibility(GONE)
+com.ss.android.ugc.exview.ImImageView{... #7f0ab151 app:id/04_ ...}
 ```
 
-**关键：图标只有基类 `LX/179c.LIZ()` 能显示，`LJI()` 跟它毫无关系。**
-所以「只拦子类的 `LIZ` / `LJI`」是**不够的**（v1.14 初版就是这么写的，红叹号漏了），
-要做三重保险：
+这个 `0x7f0ab151` 正是 v1.13 里那条标注「已验证有效」的 id。**旧文档那条是对的** ——
+v1.14 把它删掉、改成按实例登记，才是真正的回归。
 
-| # | 拦什么 | 挡住什么 |
-|---|---|---|
-| 1 | 子类 `LIZ` / `LJI` | 它的 `invoke-super` 和说明文字 |
-| 2 | 基类 `LIZ()` | 任何直接走基类显示图标的路 |
-| 3 | **构造时把 `b` 登记进压制表** | **图标在 cell 布局里默认就 VISIBLE 的情况** |
+#### 为什么「按方法名 / 按实例」这条路走不通
 
-第 3 条是关键、也是最反直觉的一条：
+先看逆向出来的结构（这层理解是对的）：
 
-> **如果控件在 XML 里默认就是 VISIBLE，拦「显示方法」等于什么都没做** ——
-> 它压根不需要被「显示」就已经亮着了。这类控件只能靠
-> 「把任何 VISIBLE 请求改写成 GONE」压住。
+```
+LX/179c （基类）
+  b: ImageView        LIZ()V    -> setImageResource + setVisibility(VISIBLE)  ← 图标唯一显示点
+                      LIZLLL()V -> setVisibility(GONE)
+StatusIconWithText extends LX/179c
+  f: DmtTextView      LIZ()V -> invoke-super LIZ() + 显示说明文字
+                      LJI()V -> 只动文字，**完全不碰图标**
+```
 
-登记用的是**实例**而不是资源 id。旧版按 id 拉黑名单踩过两次坑：
-`0x7f0aa9d7` 同时也是会话列表的标题，加进黑名单后消息页的会话名全没了；
-而且资源 id 是 aapt 打包时分配的，抖音升级就会变。按实例登记既精确又不受版本影响。
+按这个结构做的实现是：在构造时按字段类型把 `b` / `f` 抓出来登记，
+之后把任何 `VISIBLE` 改写成 `GONE`。**真机日志显示它从未生效** ——
+连采样打的「进入」一行都没有。
 
-登记动作挂在「显示方法」和「构造方法」两处：前者一定能拿到实例，
-后者覆盖「布局默认 VISIBLE、显示方法从没被调用过」的情况。两条都是低频路径。
+原因是 **ART 内联**：`StatusIconWithText` 的构造方法和 `LIZ` / `LIZJ` / `LIZLLL` / `LJI`
+都只有十几个指令，会被调用方内联进自己的方法体，于是 hook 永远不会被调用。
+libxposed 的文档对此有明确警告（`hook` 的注释 + `deoptimize()` 的存在就是为此）：
 
-不动 `LIZJ` / `LIZLLL` 这些隐藏路径，避免和它自己的状态机打架。
+> when a short hooked method B is invoked by method A, the callback to B is not invoked
+> after hooking, which may mean A has inlined B inside its method body.
 
-> **固有副作用**：消息真的因为网络原因发送失败时，用户也看不到红叹号了，
-> 也就不知道要重发。这是这个功能的代价，不是 bug。
+> **教训：不要 hook 抖音自己写的「短方法」。** 十几条指令的方法随时可能被内联。
+> 框架方法（`TextView.setText`、`View.setVisibility`）不会被内联，所以那两条一直好使。
+
+#### 最终做法：在压制层按「类名 + 资源 id」匹配
+
+```
+View.setVisibility(int)
+    └─ requested == GONE ?              -> 放行（大多数调用走这条）
+    └─ view.id == 0x7f0ab151
+       && view 是 com.ss.android.ugc.exview.ImImageView
+       && 「别提示我被限制了」开着      -> 改写成 GONE
+```
+
+先比 int：对绝大多数 View 这一步不成立，直接放行，热路径上几乎零成本；
+命中之后才去比类名，避免这个 id 万一被别的界面复用时误伤。
+
+#### 代价与对策
+
+**资源 id 是 aapt 打包时分配的，抖音换版本可能变。** 这一点无法回避 ——
+这个控件除了 id 和类名，没有任何稳定特征（它就是一个布局里声明的 `ImImageView`）。
+
+所以：安装时会把「按哪个 id 压制」写进日志，一旦失效一眼就能看出来，
+而不是功能默默失灵。重新取值的方法：打开详细日志，**点一下那个图标**，
+点击探针会写出它的 `#0x...`（这个控件是可点击的，点它会弹重发提示）。
+
+> **固有副作用**：消息真的因为网络原因发送失败时，用户也看不到这个提示了。
 
 ### 6.4 按关键词隐藏文字（通用兜底层）
 
@@ -733,6 +750,7 @@ v1.13 卡在第二类，而当时的代码只在「命中」时才打日志、�
 | 开关按「实现层」拆 | 用户想消掉的是**现象**不是实现。四个开关描述同一件事 = 让用户做无意义的选择 |
 | 默认什么都不做的开关 | 「按控件 id 隐藏」默认列表是空的 = 纯占位开关，直接删 |
 | 「保存」按钮 + 手动词表 | 其它开关都是即时生效，只有词表要手动存，交互不一致；改成停顿 600ms 自动保存 |
+| hook 一个「短方法」却没命中 | **抖音自己的小方法会被 ART 内联**，hook 永远不会被调用（连「进入」都不打）。别 hook 十几条指令的自研方法，去 hook 框架方法或改成在更下层压制 |
 
 ## 9. 已知限制与待办
 
