@@ -24,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.6.1"
+private const val VERSION = "1.6.2"
 
 /**
  * Miuix 的排版约定（来自官方 example）：

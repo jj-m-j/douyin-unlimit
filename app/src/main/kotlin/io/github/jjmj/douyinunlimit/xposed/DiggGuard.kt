@@ -51,6 +51,8 @@ internal object DiggGuard {
         hookLikeEntry(module, loader, rules)
         hookIconRender(module, loader)
         hookGlobalState(module, loader, rules)
+        // 诊断：确认点赞实际走哪条链路，以及服务端驳回时响应体的真实内容
+        DiggNetDiag.install(module, loader)
     }
 
     // ---------------------------------------------------------------- A. 点赞入口
