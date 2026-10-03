@@ -37,6 +37,22 @@ internal object DiggNetDiag {
         "Y.AOSubscribeS1001S0100000_15" to listOf("subscribe\$6", "subscribe\$7", "subscribe\$10"),
     )
 
+    /**
+     * 其它持有 `/aweme/v1/commit/item/digg/` 这个地址的类。
+     * `X.1JCt` 那条路径引用了 IFamiliarRecommendService（朋友页推荐），
+     * 很可能只是「朋友」流的点赞，主 feed 的点赞走的是别的入口，
+     * 所以这里把这几个兄弟类也一并挂上，看看到底是谁在发请求。
+     */
+    private val SIBLING_CLASSES = listOf(
+        "X.1JCx",
+        "X.131Y",
+        "X.14e4",
+        "X.15KG",
+    )
+
+    /** 类太大就跳过，避免把几百个方法全挂上。 */
+    private const val SIBLING_METHOD_LIMIT = 40
+
     /** 非 Rx 路径，只做记录。 */
     private val CALL_PATHS = listOf(
         "X.0ZFj" to "invokeSuspend",
@@ -50,6 +66,39 @@ internal object DiggNetDiag {
         hookFactory(module, loader)
         hookRx(module, loader)
         hookCallPaths(module, loader)
+        hookSiblings(module, loader)
+    }
+
+    // ---------------------------------------------------------------- 兄弟类：找真正的发起方
+
+    private fun hookSiblings(module: XposedModule, loader: ClassLoader) {
+        val hooked = mutableListOf<String>()
+        for (className in SIBLING_CLASSES) {
+            val clazz = runCatching { Class.forName(className, false, loader) }.getOrNull()
+            if (clazz == null) {
+                module.log(Log.WARN, Diag.TAG, "DiggNetDiag: 找不到 $className")
+                continue
+            }
+            val methods = clazz.declaredMethods
+            if (methods.size > SIBLING_METHOD_LIMIT) {
+                module.log(Log.WARN, Diag.TAG, "DiggNetDiag: $className 有 ${methods.size} 个方法，跳过")
+                continue
+            }
+            for (method in methods) {
+                runCatching {
+                    module.hook(method).intercept { chain ->
+                        Diag.log("sibling", "$className.${method.name} 被调用")
+                        chain.proceed()
+                    }
+                    hooked += "$className.${method.name}"
+                }
+            }
+        }
+        module.log(
+            Log.INFO,
+            Diag.TAG,
+            if (hooked.isEmpty()) "DiggNetDiag: 兄弟类一个都没挂上" else "DiggNetDiag sibling hooked: ${hooked.size} 个方法",
+        )
     }
 
     // ---------------------------------------------------------------- 工厂层：看真实响应

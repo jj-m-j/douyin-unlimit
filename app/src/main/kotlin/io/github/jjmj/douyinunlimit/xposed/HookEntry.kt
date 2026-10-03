@@ -23,6 +23,9 @@ class HookEntry : XposedModule() {
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
         if (param.packageName != TARGET_PACKAGE) return
 
+        Diag.startSession("package ${param.packageName} ready")
+        Diag.logFileLocation()
+
         // hook 一次性全部装上，开关只影响拦截时的行为，改配置不用重启抖音
         val rules = RuleSource(prefs)
 
@@ -30,8 +33,10 @@ class HookEntry : XposedModule() {
         install("im ban tips") { ImBanGuard.install(this, param.classLoader, rules) }
         install("send status") { SendStatusGuard.install(this, param.classLoader, rules) }
         install("text") { TextGuard.install(this, rules) }
-        install("digg") { DiggGuard.install(this, param.classLoader, rules) }
         install("view") { ViewGuard.install(this, rules) }
+        install("digg") { DiggGuard.install(this, param.classLoader, rules) }
+
+        Diag.log("all guards installed")
     }
 
     private inline fun install(name: String, block: () -> Unit) {
