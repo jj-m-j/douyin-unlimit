@@ -26,6 +26,8 @@ import java.lang.reflect.Modifier
  */
 internal object ImBanGuard {
 
+    private const val TAG = "DouyinUnlimit"
+
     private const val TIPS_LOGIC =
         "com.ss.android.ugc.aweme.im.sdk.module.session.rips.sessionheader.tips.ChatBanTipsLogic"
 
