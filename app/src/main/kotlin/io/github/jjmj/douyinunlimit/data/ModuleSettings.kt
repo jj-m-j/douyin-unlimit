@@ -4,5 +4,6 @@ data class ModuleSettings(
     val blockToast: Boolean = true,
     val toastKeywords: List<String> = Prefs.DEFAULT_TOAST_KEYWORDS,
     val hideImBanTips: Boolean = true,
-    val fakeNoBanInfo: Boolean = false,
+    val hideViews: Boolean = true,
+    val hideViewIds: List<Int> = ViewIds.DEFAULT,
 )

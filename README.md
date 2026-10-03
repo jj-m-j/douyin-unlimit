@@ -11,8 +11,8 @@
 | 隐藏「点赞功能已封禁」这类吐司 | ✅ 已实现 |
 | 可自定义拦截关键词 | ✅ 已实现 |
 | 隐藏消息页「消息发送功能已被禁止使用」横幅 | ✅ 已实现 |
-| 伪装无封禁记录（实验性） | ✅ 已实现 |
-| 其它限制类界面元素（灰化/遮罩/禁用态） | ⬜ 计划中 |
+| 按控件 id 隐藏界面元素（如发送失败的红感叹号） | ✅ 已实现 |
+| 其它限制类界面元素 | ⬜ 持续补充中 |
 
 ## 原理
 
@@ -59,6 +59,39 @@ ChatBanTipsUI (extends RipsUI)             // 渲染，整个类只服务这一�
 `no punish id → 隐藏` 分支。
 
 `0x7f0ac401` 这个 id 是在真机上用 Layout Inspect 抓出来核对过的。
+
+## 按控件 id 隐藏界面元素
+
+聊天里那些「违反社区规定」提示是**服务端下发**的（既不在 dex 字符串里，也不在资源表里），
+所以没法按文案匹配。这一类只能按控件 id 处理。
+
+模块拦的是 `View.setVisibility(int)`：命中黑名单的控件，把任何「显示」请求改写成 `GONE`。
+
+**为什么不在 inflate 时隐藏**：聊天列表是 RecyclerView，控件会被复用，每次 rebind 都会重新
+toggle 可见性。比如发送状态组件 `StatusIconWithText`：
+
+```smali
+LJI():
+    if (message.getMsgStatus() >= 2) return
+    textView.setText(resources.getString(0x7f11501a))
+    textView.setVisibility(VISIBLE)      // ← 每次 bind 都会重新显示
+```
+
+在 inflate/adapter 层隐藏会被下一次 rebind 覆盖，只有拦 `setVisibility` 才拦得住。
+
+代价是 `setVisibility` 属于热路径，所以做了两件事压低开销：配置摊平成 `IntArray`
+（判定只做一次线性扫描，无装箱无分配），未命中时直接 `proceed`。
+
+默认黑名单：
+
+| id | 控件 |
+|---|---|
+| `0x7f0ab151` | `ImImageView` — 发送状态图标（红感叹号） |
+| `0x7f0aa9d7` | `DrawChildOptEllipsizeLayout` — 状态文字容器 |
+
+⚠️ 这些 id 是 aapt 打包时分配的，**抖音升级后可能变化**。失效时用 Layout Inspect 重新抓一次，
+在模块里改掉即可（输入接受 `0x7f0ab151` 或十进制）。模块也只在每个 id 第一次命中时打一条日志，
+logcat 搜 `DouyinUnlimit` 能看到实际拦到了什么。
 
 ## 环境要求
 

@@ -42,7 +42,7 @@ internal object ToastGuard {
         runCatching {
             module.hook(show).intercept { chain ->
                 val toast = chain.thisObject as? Toast
-                if (toast != null && rules.shouldBlock(textOf(toast))) {
+                if (toast != null && rules.shouldBlockToast(textOf(toast))) {
                     return@intercept null
                 }
                 chain.proceed()
@@ -94,7 +94,7 @@ internal object ToastGuard {
             runCatching {
                 module.hook(method).intercept { chain ->
                     for (arg in chain.args) {
-                        if (arg is CharSequence && rules.shouldBlock(arg.toString())) {
+                        if (arg is CharSequence && rules.shouldBlockToast(arg.toString())) {
                             return@intercept null
                         }
                     }

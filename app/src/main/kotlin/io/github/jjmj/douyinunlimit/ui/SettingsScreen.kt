@@ -14,6 +14,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import io.github.jjmj.douyinunlimit.data.Keywords
 import io.github.jjmj.douyinunlimit.data.SettingsBridge
+import io.github.jjmj.douyinunlimit.data.ViewIds
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -23,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.1.0"
+private const val VERSION = "1.2.0"
 
 /**
  * Miuix 的排版约定（来自官方 example）：
@@ -37,8 +38,11 @@ fun SettingsScreen() {
     val connected = SettingsBridge.serviceConnected
 
     // 必须放在 LazyColumn 外面：item {} 各自是独立作用域
-    var draft by remember(settings.toastKeywords) {
+    var keywordDraft by remember(settings.toastKeywords) {
         mutableStateOf(TextFieldValue(Keywords.encode(settings.toastKeywords)))
+    }
+    var idDraft by remember(settings.hideViewIds) {
+        mutableStateOf(TextFieldValue(ViewIds.encode(settings.hideViewIds)))
     }
 
     Scaffold(
@@ -85,10 +89,39 @@ fun SettingsScreen() {
                         summary = "去掉「消息发送功能已被禁止使用」那条提示",
                     )
                     SwitchPreference(
-                        checked = settings.fakeNoBanInfo,
-                        onCheckedChange = { SettingsBridge.setFakeNoBanInfo(it) },
-                        title = "伪装无封禁记录",
-                        summary = "让抖音读到空的封禁信息，更彻底但可能影响其它逻辑",
+                        checked = settings.hideViews,
+                        onCheckedChange = { SettingsBridge.setHideViews(it) },
+                        title = "按 id 隐藏控件",
+                        summary = "强制把下面这些控件设为不可见，含发送失败的红感叹号",
+                    )
+                }
+            }
+
+            item(key = "view-ids") {
+                SmallTitle(text = "控件 id")
+                TextField(
+                    value = idDraft,
+                    onValueChange = { idDraft = it },
+                    label = "每行一个，如 0x7f0ab151",
+                    useLabelAsPlaceholder = true,
+                    singleLine = false,
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp),
+                )
+                Card(
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp),
+                ) {
+                    ArrowPreference(
+                        title = "保存控件 id",
+                        summary = "用 Layout Inspect 抓到新 id 后加在这里",
+                        onClick = { SettingsBridge.setHideViewIds(ViewIds.parse(idDraft.text)) },
+                    )
+                    ArrowPreference(
+                        title = "恢复默认",
+                        onClick = { SettingsBridge.resetHideViewIds() },
                     )
                 }
             }
@@ -110,10 +143,10 @@ fun SettingsScreen() {
             }
 
             item(key = "keywords") {
-                SmallTitle(text = "关键词")
+                SmallTitle(text = "吐司关键词")
                 TextField(
-                    value = draft,
-                    onValueChange = { draft = it },
+                    value = keywordDraft,
+                    onValueChange = { keywordDraft = it },
                     label = "每行一条",
                     useLabelAsPlaceholder = true,
                     singleLine = false,
@@ -130,7 +163,7 @@ fun SettingsScreen() {
                         title = "保存关键词",
                         summary = "命中任意一条即拦截",
                         onClick = {
-                            SettingsBridge.setToastKeywords(Keywords.parse(draft.text))
+                            SettingsBridge.setToastKeywords(Keywords.parse(keywordDraft.text))
                         },
                     )
                     ArrowPreference(
@@ -149,7 +182,8 @@ fun SettingsScreen() {
                 ) {
                     BasicComponent(
                         title = "说明",
-                        summary = "只修改抖音自身的本地提示，不修改任何服务端状态。",
+                        summary = "只修改抖音自身的本地提示，不修改任何服务端状态。" +
+                            "控件 id 由抖音打包时分配，升级后可能失效，届时重新抓一次即可。",
                     )
                 }
             }

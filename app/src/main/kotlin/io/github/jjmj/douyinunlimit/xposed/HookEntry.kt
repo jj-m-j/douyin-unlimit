@@ -26,13 +26,15 @@ class HookEntry : XposedModule() {
         // hook 一次性全部装上，开关只影响拦截时的行为，改配置不用重启抖音
         val rules = RuleSource(prefs)
 
-        runCatching { ToastGuard.install(this, param.classLoader, rules) }
-            .onSuccess { log(Log.INFO, TAG, "toast guard installed") }
-            .onFailure { log(Log.ERROR, TAG, "toast guard failed", it) }
+        install("toast") { ToastGuard.install(this, param.classLoader, rules) }
+        install("im ban tips") { ImBanGuard.install(this, param.classLoader, rules) }
+        install("view") { ViewGuard.install(this, rules) }
+    }
 
-        runCatching { ImBanGuard.install(this, param.classLoader, rules) }
-            .onSuccess { log(Log.INFO, TAG, "im ban guard installed") }
-            .onFailure { log(Log.ERROR, TAG, "im ban guard failed", it) }
+    private inline fun install(name: String, block: () -> Unit) {
+        runCatching(block)
+            .onSuccess { log(Log.INFO, TAG, "$name guard installed") }
+            .onFailure { log(Log.ERROR, TAG, "$name guard failed", it) }
     }
 
     private companion object {

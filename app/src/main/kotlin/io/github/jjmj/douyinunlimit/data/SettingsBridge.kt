@@ -47,7 +47,8 @@ object SettingsBridge {
             blockToast = p.getBoolean(Prefs.KEY_BLOCK_TOAST, true),
             toastKeywords = Keywords.parse(p.getString(Prefs.KEY_TOAST_KEYWORDS, null)),
             hideImBanTips = p.getBoolean(Prefs.KEY_HIDE_IM_BAN_TIPS, true),
-            fakeNoBanInfo = p.getBoolean(Prefs.KEY_FAKE_NO_BAN, false),
+            hideViews = p.getBoolean(Prefs.KEY_HIDE_VIEWS, true),
+            hideViewIds = ViewIds.parse(p.getString(Prefs.KEY_HIDE_VIEW_IDS, null)),
         )
     }
 
@@ -68,10 +69,17 @@ object SettingsBridge {
         putBoolean(Prefs.KEY_HIDE_IM_BAN_TIPS, value)
     }
 
-    fun setFakeNoBanInfo(value: Boolean) {
-        settings = settings.copy(fakeNoBanInfo = value)
-        putBoolean(Prefs.KEY_FAKE_NO_BAN, value)
+    fun setHideViews(value: Boolean) {
+        settings = settings.copy(hideViews = value)
+        putBoolean(Prefs.KEY_HIDE_VIEWS, value)
     }
+
+    fun setHideViewIds(value: List<Int>) {
+        settings = settings.copy(hideViewIds = value)
+        putString(Prefs.KEY_HIDE_VIEW_IDS, ViewIds.encode(value))
+    }
+
+    fun resetHideViewIds() = setHideViewIds(ViewIds.DEFAULT)
 
     private fun putBoolean(key: String, value: Boolean) {
         prefs?.edit()?.putBoolean(key, value)?.apply()
