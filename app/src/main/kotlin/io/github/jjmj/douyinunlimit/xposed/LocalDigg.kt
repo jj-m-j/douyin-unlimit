@@ -211,7 +211,7 @@ internal object LocalDigg {
 
     // ---------------------------------------------------------------- 入口二：双击屏幕
 
-    private fun installDoubleTapEntry(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
+    private fun installDoubleTapByEvent(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
         val widget = runCatching { Class.forName(DIGG_WIDGET, false, loader) }.getOrNull()
         if (widget == null) {
             Diag.log("digg", "入口二：找不到 $DIGG_WIDGET")
