@@ -5,11 +5,13 @@ import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
 import io.github.libxposed.api.XposedModule
+import java.lang.reflect.Field
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 「隐藏限制提示」——把抖音宣告「你被限制了」的三种载体一起吞掉。
@@ -59,6 +61,20 @@ internal object RestrictionGuard {
     private const val SEND_STATUS =
         "com.ss.android.ugc.aweme.im.business.chat.msgcell.common.status.sendstatus.StatusIconWithText"
 
+    /** 发送状态指示的基类，图标（红叹号）唯一的显示点在这里。 */
+    private const val STATUS_INDICATOR = "X.179c"
+
+    private const val SAMPLE_LIMIT = 40
+
+    /** 显示方法被拦下的次数。有它才能在日志里区分「没命中」和「命中但无效」。 */
+    private val showHits = AtomicInteger(0)
+
+    /** 登记过的发送状态图标个数。 */
+    private val captured = AtomicInteger(0)
+
+    /** 登记失败的次数，只报第一条，避免刷屏。 */
+    private val captureMissed = AtomicInteger(0)
+
     fun install(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
         hookSystemToast(module, rules)
         for (name in TOAST_CLASSES) hookDuxToast(module, loader, name, rules)
@@ -74,14 +90,8 @@ internal object RestrictionGuard {
             enabled = { rules.hideTips() },
         )
 
-        // 聊天发送状态：只拦「显示」，不动 LIZJ / LIZLLL 这些隐藏路径，
-        // 避免和它自己的状态机打架。
-        hookShowMethods(
-            module, loader, SEND_STATUS,
-            names = listOf("LIZ", "LJI"),
-            label = "聊天发送状态",
-            enabled = { rules.hideTips() },
-        )
+        // 聊天发送状态（红叹号 + 说明文字）：要同时处理基类、子类和控件本身，见函数注释。
+        hookSendStatus(module, loader, rules)
     }
 
     // ---------------------------------------------------------------- 系统 Toast
@@ -220,7 +230,13 @@ internal object RestrictionGuard {
         for (method in targets) {
             runCatching {
                 module.hook(method).intercept { chain ->
-                    if (enabled()) null else chain.proceed()
+                    if (!enabled()) return@intercept chain.proceed()
+
+                    // 命中日志：没有它就没法区分「没挂上 / 挂上没命中 / 命中但无效」
+                    if (showHits.incrementAndGet() <= SAMPLE_LIMIT) {
+                        Diag.log("tips", "$label：拦下 ${clazz.simpleName}.${method.name}()")
+                    }
+                    null
                 }
                 hooked += method.name
             }
@@ -231,6 +247,148 @@ internal object RestrictionGuard {
             "$label：已挂钩 ${clazz.simpleName}.${hooked.joinToString("/")}" +
                 if (named.isEmpty()) "（按名字没找到，退化为全屏蔽）" else "",
         )
+    }
+
+    // ---------------------------------------------------------------- 聊天发送状态
+
+    /**
+     * 聊天发送状态指示（红叹号 + 说明文字）。
+     *
+     * 逆向抖音 40.2.0 的真实结构：
+     *
+     * ```
+     * LX/179c （基类）
+     *   b: ImageView                          // 状态图标（红叹号）
+     *   LIZ()V    -> b.setImageResource + b.setContentDescription
+     *                + b.setVisibility(VISIBLE)        ★ 图标唯一的显示点
+     *   LIZLLL()V -> b.setVisibility(GONE)                // 隐藏
+     *   LIZIZ/LIZJ -> throw NPE（留给子类实现的占位）
+     *
+     * StatusIconWithText extends LX/179c
+     *   LIZ()V  -> invoke-super LIZ()（显示图标）+ 设置并显示说明文字   ★ 显示
+     *   LJI()V  -> 只动说明文字，**完全不碰图标**
+     *   LIZJ()V -> 把图标和文字都藏起来，再调 LJI()
+     * ```
+     *
+     * 关键点：**图标只有基类 `LX/179c.LIZ()` 能显示**，`LJI()` 跟它无关。
+     * 所以要三重保险，任何一条生效都能压住：
+     *
+     *  1. 拦子类的 `LIZ` / `LJI` —— 挡掉它的 `invoke-super` 和说明文字
+     *  2. 拦基类的 `LIZ()` —— 挡住任何直接走基类显示图标的路
+     *  3. **把这个 ImageView 登记进 [TextHider] 的压制表** ——
+     *     它是聊天 cell 布局里就有的控件，**很可能在 XML 里默认就是 VISIBLE**。
+     *     那种情况下拦「显示方法」等于什么都没做：它压根不需要被「显示」就已经亮着了。
+     *     （这正是旧版按资源 id 压制那条路在干的活。改成按实例登记更精确，
+     *     不会像 `0x7f0aa9d7` 那样把复用了同一个 id 的其它界面一起干掉。）
+     *
+     * 登记动作挂在「显示方法」和「构造方法」两处：前者一定能拿到实例，
+     * 后者覆盖「布局默认 VISIBLE、显示方法从没被调用过」的情况。
+     * 两条都是低频路径，开销可以忽略。
+     *
+     * 不动 `LIZJ` / `LIZLLL` 这些隐藏路径，避免和它自己的状态机打架。
+     */
+    private fun hookSendStatus(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
+        val sub = runCatching { Class.forName(SEND_STATUS, false, loader) }.getOrNull()
+        val base = runCatching { Class.forName(STATUS_INDICATOR, false, loader) }.getOrNull()
+
+        // 图标字段在基类上（StatusIconWithText 继承它）
+        val iconField = base?.let { runCatching { it.getField("b") }.getOrNull() }
+
+        if (sub == null) {
+            Diag.log("tips", "找不到 $SEND_STATUS（聊天发送状态）")
+        } else {
+            hookShowMethod(module, sub, "LIZ", "聊天发送状态", rules, iconField)
+            hookShowMethod(module, sub, "LJI", "聊天发送状态", rules, iconField)
+        }
+
+        if (base == null) {
+            Diag.log("tips", "找不到 $STATUS_INDICATOR（发送状态基类）")
+            return
+        }
+
+        hookShowMethod(module, base, "LIZ", "发送状态图标", rules, iconField)
+        hookIconCapture(module, base, iconField, rules)
+    }
+
+    /**
+     * 拦掉一个「显示」方法，并顺手把它持有的图标控件登记进压制表。
+     *
+     * 登记与开关无关（代价只是一次反射读字段），这样用户把开关打开时立刻生效，
+     * 不必等下一次「显示」被调用。
+     */
+    private fun hookShowMethod(
+        module: XposedModule,
+        clazz: Class<*>,
+        name: String,
+        label: String,
+        rules: RuleSource,
+        iconField: Field?,
+    ) {
+        val method = clazz.declaredMethods.firstOrNull { it.name == name && it.parameterCount == 0 }
+        if (method == null) {
+            Diag.log("tips", "$label：${clazz.simpleName} 里没有 $name()V")
+            return
+        }
+
+        runCatching {
+            module.hook(method).intercept { chain ->
+                registerIcon(chain.thisObject, iconField, rules)
+
+                if (!rules.hideTips()) return@intercept chain.proceed()
+
+                if (showHits.incrementAndGet() <= SAMPLE_LIMIT) {
+                    Diag.log("tips", "$label：拦下 ${clazz.simpleName}.$name()")
+                }
+                null
+            }
+            Diag.log("tips", "$label：已挂钩 ${clazz.simpleName}.$name()")
+        }.onFailure { Diag.log("tips", "$label：${clazz.simpleName}.$name() 挂载失败: $it") }
+    }
+
+    /**
+     * 在构造方法返回后拿到图标控件。覆盖「布局里默认 VISIBLE、
+     * 显示方法从没被调用过」的情况——那时候只靠拦显示方法是压不住的。
+     */
+    private fun hookIconCapture(
+        module: XposedModule,
+        base: Class<*>,
+        iconField: Field?,
+        rules: RuleSource,
+    ) {
+        val ctor = base.declaredMethods.firstOrNull { it.name == "<init>" && it.parameterCount == 1 }
+        if (ctor == null || iconField == null) {
+            Diag.log("tips", "无法登记状态图标：构造方法或字段 b 没找到")
+            return
+        }
+
+        runCatching {
+            module.hook(ctor).intercept { chain ->
+                val result = chain.proceed()
+                registerIcon(chain.thisObject, iconField, rules)
+                result
+            }
+            Diag.log("tips", "已挂钩 $STATUS_INDICATOR.<init>（构造时登记红叹号控件）")
+        }.onFailure { Diag.log("tips", "$STATUS_INDICATOR.<init> 挂载失败: $it") }
+    }
+
+    /** 把实例持有的图标控件登记进压制表；首次登记时把它按成 GONE。 */
+    private fun registerIcon(instance: Any?, iconField: Field?, rules: RuleSource) {
+        if (instance == null || iconField == null) return
+
+        val icon = runCatching { iconField.get(instance) as? View }.getOrNull()
+        if (icon == null) {
+            if (captureMissed.incrementAndGet() == 1) {
+                Diag.log("tips", "登记状态图标失败：拿不到 ImageView（instance=$instance）")
+            }
+            return
+        }
+
+        if (!TextHider.markTip(icon)) return
+
+        if (captured.incrementAndGet() <= SAMPLE_LIMIT) {
+            Diag.log("tips", "已登记状态图标控件（后续任何显示请求都会被压成 GONE）")
+        }
+        if (rules.hideTips()) icon.visibility = View.GONE
     }
 
     // ---------------------------------------------------------------- 跳过返回值

@@ -7,54 +7,81 @@ import io.github.libxposed.api.XposedModule
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * 按关键词隐藏文字控件。
+ * 隐藏界面元素。两种登记来源，共用一个「压制」出口：
  *
- * ## 为什么要有这一层
+ *  1. **关键词文字**（本对象自己判定）：`TextView.setText` 命中关键词 -> 登记 + GONE
+ *  2. **被点名的控件**（[markTip]，由 RestrictionGuard 调用）：例如聊天里的发送状态图标
  *
- * 抖音的限制类文案大多是**服务端下发**的，既不在 dex 字符串里也不在资源表里，
- * 而且同一类提示会散落在不同位置（会话里的系统消息、聊天里的提示行、列表里的横幅……）。
- * 按控件 id 一个个点名是打地鼠，而且一个资源 id 还可能被别的界面复用（踩过这个坑：
- * 0x7f0aa9d7 同时也是会话列表的标题，加进黑名单后消息页的会话名全没了）。
+ * 两者都必须走同一个压制层，原因见下。
  *
- * 所以改成按**运行时文字内容**判定，和吐司共用同一份关键词表。
+ * ## 为什么「只拦显示方法」不够，必须补一层 setVisibility 压制
  *
- * ## 必须两层拦截，缺一不可
+ * 两个独立的现实：
  *
- *   TextView.setText(CharSequence) -> 命中关键词就登记进 [blocked] 并立即 GONE
- *   View.setVisibility(int)         -> 控件在登记表里，就把任何 VISIBLE 请求改写成 GONE
+ *  - **调用方会在 setText 之后再把控件显示回来**：
+ *    ```smali
+ *    LJI():
+ *        textView.setText(...)            // 这里识别到并标记
+ *        textView.setVisibility(VISIBLE)  // 紧接着又被显示回来
+ *    ```
+ *  - **控件可能在布局里默认就是 VISIBLE 的**：这类控件代码从头到尾只「藏」不「显示」，
+ *    拦掉显示方法等于什么都没做，它照样亮着。聊天里的发送状态图标（红叹号）正是如此：
+ *    它只由基类 `LX/179c.LIZ()` 显示，而那个 ImageView 是聊天 cell 布局里就有的，
+ *    构造 `StatusIconWithText` 时被传进来。
  *
- * 原因是调用方经常在 setText **之后**再补一次显示，例如：
+ * 所以 setText / 显示方法只负责**登记**，真正的压制交给 [View.setVisibility] 那一层 ——
+ * 只要控件在登记表里，任何 VISIBLE 请求都改写成 GONE。
  *
- *   LJI():
- *       textView.setText(...)             // 这里识别到并标记
- *       textView.setVisibility(VISIBLE)   // 紧接着又被显示回来 <- 只拦 setText 挡不住
+ * ## 为什么按实例登记，而不是按资源 id
  *
- * ## 开销
+ * 旧版是按资源 id 拉黑名单，踩过两次坑：
+ *   - `0x7f0aa9d7` 同时也是会话列表的标题，加进黑名单后**消息页的会话名全没了**
+ *   - 资源 id 是 aapt 打包时分配的，**抖音升级就可能变**
  *
- * setText / setVisibility 是极热路径，控制手段：
- *   - 开关判断走 [RuleSource.textHidingOn]（计数器节流，纯内存）
- *   - 文字短于最短关键词直接跳过扫描
- *   - 跳过 EditText：否则用户自己打「封禁」两个字，输入框会当场消失
- *   - 命中判定是纯数组扫描，无装箱无分配
- *   - 每个关键词只在第一次命中时写一条日志
+ * 按实例登记没有这两个问题：只压住**自己抓到的那个 View 对象**，不可能误伤别的界面，
+ * 抖音升级也照样有效。
+ *
+ * ## 开销（setVisibility 是极热路径）
+ *
+ *   - 先比 `requested == GONE` 直接放行（一半以上的调用走这条）
+ *   - 再做一次 WeakHashMap 查找；两张表都很小（几个到几十个控件）
+ *   - 只有命中登记表才会去读开关，查找未命中时零额外开销
+ *   - 跳过 EditText，否则用户自己打「封禁」两个字输入框会当场消失
  */
 internal object TextHider {
 
-    /** 判定为「要隐藏」的控件。WeakHashMap 保证控件被回收后自动出表，不泄漏 View。 */
-    private val blocked: MutableSet<View> = Collections.synchronizedSet(
-        Collections.newSetFromMap(WeakHashMap<View, Boolean>()),
-    )
+    /** 关键词命中的控件。 */
+    private val keywordViews: MutableSet<View> = newWeakSet()
+
+    /** 被 [markTip] 点名的控件（RestrictionGuard 登记的发送状态图标等）。 */
+    private val tipViews: MutableSet<View> = newWeakSet()
 
     private val logged = ConcurrentHashMap.newKeySet<String>()
+
+    private val squashCount = AtomicInteger(0)
+
+    private fun newWeakSet(): MutableSet<View> =
+        Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap<View, Boolean>()))
 
     fun install(module: XposedModule, rules: RuleSource) {
         hookSetText(module, rules)
         hookSetVisibility(module, rules)
     }
 
-    // ---------------------------------------------------------------- 第一层
+    /**
+     * 登记一个「无论调用方怎么显示都要藏住」的控件。
+     *
+     * RestrictionGuard 用它压住聊天里的发送状态图标：那个 ImageView 来自 cell 布局，
+     * 可能在 XML 里就是 VISIBLE，光拦「显示方法」压不住。
+     *
+     * @return 是否是第一次登记（调用方据此只打一次日志、只按一次 GONE）
+     */
+    fun markTip(view: View): Boolean = tipViews.add(view)
+
+    // ---------------------------------------------------------------- 登记层
 
     private fun hookSetText(module: XposedModule, rules: RuleSource) {
         val method = runCatching {
@@ -74,7 +101,7 @@ internal object TextHider {
                 if (view != null && text != null && !isEditable(view) &&
                     rules.textHidingOn() && rules.shouldHideText(text)
                 ) {
-                    blocked.add(view)
+                    keywordViews.add(view)
                     view.visibility = View.GONE
                     logOnce(text)
                 }
@@ -85,7 +112,7 @@ internal object TextHider {
         }.onFailure { Diag.log("text", "TextView.setText 挂载失败: $it") }
     }
 
-    // ---------------------------------------------------------------- 第二层
+    // ---------------------------------------------------------------- 压制层
 
     private fun hookSetVisibility(module: XposedModule, rules: RuleSource) {
         val method = runCatching {
@@ -98,18 +125,24 @@ internal object TextHider {
 
         runCatching {
             module.hook(method).intercept { chain ->
+                // 已经是隐藏态就放行，先走最短路径（一半以上的调用走这条）
                 val requested = chain.args[0] as Int
-                // 已经是隐藏态就不用管了，先走最短路径
                 if (requested == View.GONE) return@intercept chain.proceed()
 
-                val view = chain.thisObject as? View
-                if (view == null || !blocked.contains(view)) return@intercept chain.proceed()
-                if (!rules.textHidingOn()) return@intercept chain.proceed()
+                val view = chain.thisObject as? View ?: return@intercept chain.proceed()
 
-                // 把任何「显示」请求改写成 GONE
+                val squash = (tipViews.contains(view) && rules.hideTips()) ||
+                    (keywordViews.contains(view) && rules.textHidingOn())
+
+                if (!squash) return@intercept chain.proceed()
+
+                if (squashCount.incrementAndGet() <= SQUASH_LOG_LIMIT) {
+                    Diag.debug("text", "压住 ${view.javaClass.name} 的显示请求")
+                }
+                // 把「显示」改写成 GONE
                 chain.proceed(arrayOf<Any?>(View.GONE))
             }
-            Diag.log("text", "已挂钩 View.setVisibility(int)（压住被标记的控件）")
+            Diag.log("text", "已挂钩 View.setVisibility(int)（压制层）")
         }.onFailure { Diag.log("text", "View.setVisibility 挂载失败: $it") }
     }
 
@@ -125,4 +158,6 @@ internal object TextHider {
             Diag.debug("text", "隐藏文字：$sample")
         }
     }
+
+    private const val SQUASH_LOG_LIMIT = 20
 }

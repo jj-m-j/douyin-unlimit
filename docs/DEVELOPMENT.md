@@ -5,6 +5,30 @@
 
 ---
 
+> ## ⚠️ v1.14 修订说明（先读这个）
+>
+> 本文档 v1.13 及之前的版本里有**四条结论是错的**，已在对应章节就地更正：
+>
+> | 位置 | 原来的结论 | 更正 |
+> |---|---|---|
+> | §6.1 | DUX 吐司两条显示分支从 `LIZJ` 一个方法分叉 | `LIZJ` 是 **static** 的「造系统吐司」函数（参数第一个是 `DuxToastV2` 自己）；自绘浮层走的是另一个方法 `LIZLLL`（`makeShowCustomToast`）。**收口点不止一个**，所以改成按「参数含 `CharSequence`/`String`」泛化扫描 |
+> | §6.2 | 让 `ChatBanTipsLogic.LJLLLLLL()` 空操作即可 | `LJLLLLLL` 只是**判定**；真正把横幅挂上去的是 `LJJJLZIJ()`（内含 `im_message_block_notice_show` 埋点）。两个都要拦 |
+> | §6.3 | 只拦 `StatusIconWithText.LIZ/LJI` 即可 | 图标只有**基类** `LX/179c.LIZ()` 能显示，`LJI()` 完全不碰图标；而且那个 ImageView 在 cell 布局里**可能默认就 VISIBLE**，还必须按实例把 VISIBLE 请求压成 GONE（这正是旧版按资源 id 压制在干的活，删掉就漏了） |
+> | §7.5 | 驳回回滚走 `VideoDiggView.onEventDiggUpdate` | 那是**跨页面同步**用的 EventBus 广播。回滚走 `FeedDiggPresenter.LJJJJZ(Exception)`，见 §7.5 |
+>
+> 后两条的失败方式最有代表性：
+>
+> - **§7.5：hook 挂上了、开关开了、一次都没命中。** 真机日志里「已挂钩 `onEventDiggUpdate`」
+>   和「用户点了赞」同时存在、却没有任何命中记录 —— 这就是「挂上但从未命中」的铁证。
+> - **§6.3：命中或不命中都不重要，因为拦错了层。** 控件在布局里默认 VISIBLE 的话，
+>   拦「显示方法」等于什么都没做。
+>
+> 一句话：**静态分析给的是假设，命中记录才是结论**；而「拦哪一层」比「拦哪个方法」更容易搞错。
+>
+> v1.14 同时把七个开关合并成四个，理由见 §6.0。
+
+---
+
 ## 0. 项目概况
 
 | 项 | 值 |
@@ -384,20 +408,44 @@ LJLLL()                                                          // 隐藏
 ### 6.3 聊天里的红叹号 / 发送状态
 
 ```
-LX/179c （基类，发送状态指示）        a: Message   b: ImageView
-  LIZ()    -> setImageResource + setVisibility(VISIBLE)   // 显示图标
-  LIZLLL() -> 隐藏
-  LJ(m)    -> 消息状态变化时调 LIZ()（虚分派，会走到子类实现）
+LX/179c （基类，发送状态指示）
+  b: ImageView                                     // 状态图标（红叹号）
+  LIZ()V     -> b.setImageResource + b.setContentDescription
+                + b.setVisibility(VISIBLE)         ★ 图标唯一的显示点
+  LIZLLL()V  -> b.setVisibility(GONE)              // 隐藏
+  LIZIZ/LIZJ -> throw NPE（留给子类实现的占位）
 
-StatusIconWithText extends LX/179c    f: DmtTextView
-  LIZ()  -> invoke-super LIZ()  然后设置并显示 f 的文字      <- 拦
-  LJI()  -> 设置并显示 f 的文字                              <- 拦
-  LIZJ() -> 把图标和文字都藏起来，再调 LJI()
-  LIZLLL() -> 隐藏
+StatusIconWithText extends LX/179c    f: DmtTextView（说明文字）
+  LIZ()V  -> invoke-super LIZ()（显示图标）+ 设置并显示 f      ★ 显示
+  LJI()V  -> 只动 f，**完全不碰图标**
+  LIZJ()V -> 把图标和文字都藏起来，再调 LJI()
+  LIZLLL()V -> super.LIZLLL() + f.setVisibility(GONE)
 ```
 
-只拦「显示」（`LIZ` / `LJI`），不动 `LIZJ` / `LIZLLL` 这些隐藏路径，
-避免和它自己的状态机打架。
+**关键：图标只有基类 `LX/179c.LIZ()` 能显示，`LJI()` 跟它毫无关系。**
+所以「只拦子类的 `LIZ` / `LJI`」是**不够的**（v1.14 初版就是这么写的，红叹号漏了），
+要做三重保险：
+
+| # | 拦什么 | 挡住什么 |
+|---|---|---|
+| 1 | 子类 `LIZ` / `LJI` | 它的 `invoke-super` 和说明文字 |
+| 2 | 基类 `LIZ()` | 任何直接走基类显示图标的路 |
+| 3 | **构造时把 `b` 登记进压制表** | **图标在 cell 布局里默认就 VISIBLE 的情况** |
+
+第 3 条是关键、也是最反直觉的一条：
+
+> **如果控件在 XML 里默认就是 VISIBLE，拦「显示方法」等于什么都没做** ——
+> 它压根不需要被「显示」就已经亮着了。这类控件只能靠
+> 「把任何 VISIBLE 请求改写成 GONE」压住。
+
+登记用的是**实例**而不是资源 id。旧版按 id 拉黑名单踩过两次坑：
+`0x7f0aa9d7` 同时也是会话列表的标题，加进黑名单后消息页的会话名全没了；
+而且资源 id 是 aapt 打包时分配的，抖音升级就会变。按实例登记既精确又不受版本影响。
+
+登记动作挂在「显示方法」和「构造方法」两处：前者一定能拿到实例，
+后者覆盖「布局默认 VISIBLE、显示方法从没被调用过」的情况。两条都是低频路径。
+
+不动 `LIZJ` / `LIZLLL` 这些隐藏路径，避免和它自己的状态机打架。
 
 > **固有副作用**：消息真的因为网络原因发送失败时，用户也看不到红叹号了，
 > 也就不知道要重发。这是这个功能的代价，不是 bug。
@@ -437,7 +485,7 @@ LJI():
 
 | 功能 | 为什么删 |
 |---|---|
-| 按控件 id 隐藏 | `ViewIds.DEFAULT` 本来就是**空列表**——默认状态下它什么都不做，只是一个「得先会用 Layout Inspect 才用得起来」的占位开关。它能覆盖的场景 §6.4 已经覆盖，而且不依赖打包时分配的资源 id（抖音升级就会变）。相关风险见 §5.5 |
+| 按控件 id 隐藏 | `ViewIds.DEFAULT` 本来就是**空列表**——默认状态下它什么都不做，只是一个「得先会用 Layout Inspect 才用得起来」的占位开关。相关风险见 §5.5。**注意它背后的能力后来以更好的形式回来了**：§6.3 需要「把某个控件永远压成 GONE」，但改成了**按实例登记**——只压住自己抓到的那个 View 对象，不会像资源 id 黑名单那样误伤复用同一 id 的其它界面 |
 | 拦截点赞 HTTP 请求（`NetGuard`） | 方案已证伪（§7.1）：点赞走 TTNet/Cronet 原生栈，Java 侧拦不到。留着是 185 行死代码 + 每个进程两个永不命中的 hook |
 
 ## 7. 点赞：最长的一条路（完整弯路记录）
