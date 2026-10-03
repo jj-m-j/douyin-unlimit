@@ -1,5 +1,8 @@
 package io.github.jjmj.douyinunlimit.ui
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -11,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import io.github.jjmj.douyinunlimit.data.Keywords
@@ -27,8 +31,20 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 
 private const val VERSION = "1.14.0"
 
+private const val REPO_URL = "https://github.com/jj-m-j/douyin-unlimit"
+private const val REPO_LABEL = "github.com/jj-m-j/douyin-unlimit"
+
 /** 关键词改完停顿多久后自动落盘。 */
 private const val AUTOSAVE_DELAY_MS = 600L
+
+private fun openUrl(context: Context, url: String) {
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+}
 
 /** 卡片统一的内缩与块间距，Miuix 规范是横向 12dp。 */
 private fun Modifier.cardInset() = this
@@ -47,6 +63,7 @@ private fun Modifier.cardInset() = this
 fun SettingsScreen() {
     val settings = SettingsBridge.settings
     val connected = SettingsBridge.serviceConnected
+    val context = LocalContext.current
 
     // 必须放在 LazyColumn 外面：item {} 各自是独立作用域
     var keywordDraft by remember(settings.keywords) {
@@ -144,11 +161,6 @@ fun SettingsScreen() {
                         summary = "点击和双击都按原生走（动画、特效都在），只在服务端驳回、" +
                             "抖音要撤销点赞的那一刻把它按住",
                     )
-                    BasicComponent(
-                        title = "它做不到什么",
-                        summary = "服务端确实没接受这次点赞。下拉刷新或换一批视频之后，" +
-                            "图标会按服务端数据恢复，这是改不掉的",
-                    )
                 }
             }
 
@@ -169,16 +181,10 @@ fun SettingsScreen() {
             item(key = "about") {
                 SmallTitle(text = "关于")
                 Card(modifier = Modifier.cardInset()) {
-                    BasicComponent(
-                        title = "它做了什么",
-                        summary = "只改抖音客户端本地的显示和交互，不碰任何服务端状态，" +
-                            "也不修改账号本身",
-                    )
-                    BasicComponent(
-                        title = "为什么有时会失效",
-                        summary = "抖音更新后类名和方法名可能变化。打开「记录详细日志」，" +
-                            "日志在 /storage/emulated/0/Android/data/" +
-                            "com.ss.android.ugc.aweme/files/unlimit-diag.log",
+                    ArrowPreference(
+                        title = "GitHub 仓库",
+                        summary = REPO_LABEL,
+                        onClick = { openUrl(context, REPO_URL) },
                     )
                 }
             }
