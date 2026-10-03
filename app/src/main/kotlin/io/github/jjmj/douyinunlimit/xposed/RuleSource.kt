@@ -26,10 +26,16 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
 
     fun shouldBlock(text: String): Boolean {
         if (text.isEmpty()) return false
-        val enabled = runCatching {
-            prefs?.getBoolean(Prefs.KEY_BLOCK_TOAST, true)
-        }.getOrNull() ?: true
-        if (!enabled) return false
+        if (!flag(Prefs.KEY_BLOCK_TOAST, true)) return false
         return keywords().any { text.contains(it) }
     }
+
+    /** 隐藏消息 tab 顶部「消息发送功能已被禁止使用」横幅。 */
+    fun hideImBanTips(): Boolean = flag(Prefs.KEY_HIDE_IM_BAN_TIPS, true)
+
+    /** 更彻底：让抖音读到空的封禁信息。 */
+    fun fakeNoBanInfo(): Boolean = flag(Prefs.KEY_FAKE_NO_BAN, false)
+
+    private fun flag(key: String, default: Boolean): Boolean =
+        runCatching { prefs?.getBoolean(key, default) }.getOrNull() ?: default
 }

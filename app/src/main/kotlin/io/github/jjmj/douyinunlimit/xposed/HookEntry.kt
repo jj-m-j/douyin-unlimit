@@ -23,10 +23,16 @@ class HookEntry : XposedModule() {
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
         if (param.packageName != TARGET_PACKAGE) return
 
+        // hook 一次性全部装上，开关只影响拦截时的行为，改配置不用重启抖音
         val rules = RuleSource(prefs)
+
         runCatching { ToastGuard.install(this, param.classLoader, rules) }
             .onSuccess { log(Log.INFO, TAG, "toast guard installed") }
-            .onFailure { log(Log.ERROR, TAG, "install failed", it) }
+            .onFailure { log(Log.ERROR, TAG, "toast guard failed", it) }
+
+        runCatching { ImBanGuard.install(this, param.classLoader, rules) }
+            .onSuccess { log(Log.INFO, TAG, "im ban guard installed") }
+            .onFailure { log(Log.ERROR, TAG, "im ban guard failed", it) }
     }
 
     private companion object {

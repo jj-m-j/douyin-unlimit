@@ -7,8 +7,13 @@ package io.github.jjmj.douyinunlimit.data
 object Prefs {
     const val GROUP = "settings"
 
+    // 吐司
     const val KEY_BLOCK_TOAST = "block_toast"
     const val KEY_TOAST_KEYWORDS = "toast_keywords"
+
+    // 界面元素
+    const val KEY_HIDE_IM_BAN_TIPS = "hide_im_ban_tips"
+    const val KEY_FAKE_NO_BAN = "fake_no_ban"
 
     /** 默认拦截关键词：命中任意一条即静默该吐司。 */
     val DEFAULT_TOAST_KEYWORDS = listOf(

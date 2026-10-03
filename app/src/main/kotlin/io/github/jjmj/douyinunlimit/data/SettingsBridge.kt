@@ -46,20 +46,38 @@ object SettingsBridge {
         settings = ModuleSettings(
             blockToast = p.getBoolean(Prefs.KEY_BLOCK_TOAST, true),
             toastKeywords = Keywords.parse(p.getString(Prefs.KEY_TOAST_KEYWORDS, null)),
+            hideImBanTips = p.getBoolean(Prefs.KEY_HIDE_IM_BAN_TIPS, true),
+            fakeNoBanInfo = p.getBoolean(Prefs.KEY_FAKE_NO_BAN, false),
         )
     }
 
     fun setBlockToast(value: Boolean) {
         settings = settings.copy(blockToast = value)
-        prefs?.edit()?.putBoolean(Prefs.KEY_BLOCK_TOAST, value)?.apply()
+        putBoolean(Prefs.KEY_BLOCK_TOAST, value)
     }
 
     fun setToastKeywords(value: List<String>) {
         settings = settings.copy(toastKeywords = value)
-        prefs?.edit()?.putString(Prefs.KEY_TOAST_KEYWORDS, Keywords.encode(value))?.apply()
+        putString(Prefs.KEY_TOAST_KEYWORDS, Keywords.encode(value))
     }
 
-    fun resetToastKeywords() {
-        setToastKeywords(Prefs.DEFAULT_TOAST_KEYWORDS)
+    fun resetToastKeywords() = setToastKeywords(Prefs.DEFAULT_TOAST_KEYWORDS)
+
+    fun setHideImBanTips(value: Boolean) {
+        settings = settings.copy(hideImBanTips = value)
+        putBoolean(Prefs.KEY_HIDE_IM_BAN_TIPS, value)
+    }
+
+    fun setFakeNoBanInfo(value: Boolean) {
+        settings = settings.copy(fakeNoBanInfo = value)
+        putBoolean(Prefs.KEY_FAKE_NO_BAN, value)
+    }
+
+    private fun putBoolean(key: String, value: Boolean) {
+        prefs?.edit()?.putBoolean(key, value)?.apply()
+    }
+
+    private fun putString(key: String, value: String) {
+        prefs?.edit()?.putString(key, value)?.apply()
     }
 }

@@ -23,7 +23,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.0.0"
+private const val VERSION = "1.1.0"
 
 /**
  * Miuix 的排版约定（来自官方 example）：
@@ -67,6 +67,28 @@ fun SettingsScreen() {
                         } else {
                             "未连接，请在 LSPosed 中启用本模块"
                         },
+                    )
+                }
+            }
+
+            item(key = "ui-elements") {
+                SmallTitle(text = "界面元素")
+                Card(
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp),
+                ) {
+                    SwitchPreference(
+                        checked = settings.hideImBanTips,
+                        onCheckedChange = { SettingsBridge.setHideImBanTips(it) },
+                        title = "隐藏消息页封禁横幅",
+                        summary = "去掉「消息发送功能已被禁止使用」那条提示",
+                    )
+                    SwitchPreference(
+                        checked = settings.fakeNoBanInfo,
+                        onCheckedChange = { SettingsBridge.setFakeNoBanInfo(it) },
+                        title = "伪装无封禁记录",
+                        summary = "让抖音读到空的封禁信息，更彻底但可能影响其它逻辑",
                     )
                 }
             }

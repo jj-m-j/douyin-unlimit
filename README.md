@@ -10,7 +10,9 @@
 |---|---|
 | 隐藏「点赞功能已封禁」这类吐司 | ✅ 已实现 |
 | 可自定义拦截关键词 | ✅ 已实现 |
-| 隐藏限制类界面元素（灰化/遮罩/禁用态） | ⬜ 计划中 |
+| 隐藏消息页「消息发送功能已被禁止使用」横幅 | ✅ 已实现 |
+| 伪装无封禁记录（实验性） | ✅ 已实现 |
+| 其它限制类界面元素（灰化/遮罩/禁用态） | ⬜ 计划中 |
 
 ## 原理
 
@@ -32,6 +34,31 @@ DuxToastV2.LIZJ(context, icon, iconTint, text, ..., style, ...)
 `DuxToastV2` / `DuxToast` 的类名是稳定的，但方法名基本被混淆（`LIZJ`、`LJ`、`LJFF` …）。
 模块不写死方法名，而是遍历所有「接收 `CharSequence` 且返回 `void` 或引用类型」的方法挂 hook，
 这样抖音升级改名也照样能命中。
+
+## 消息页封禁横幅
+
+消息 tab 顶部那条「消息发送功能已被禁止使用」走的是另一条链路：
+
+```
+ChatBanTipsLogic (extends PriorityLogic)   // 显示/隐藏判定
+  LJLLLLLL()V
+    banInfo   = LX/0xtl.LIZ()                   // 本地缓存的封禁信息
+    punishIds = banInfo?.LJ() ?: emptyList()    // 封禁记录 id
+    shownIds  = IMKevaConfig 里已展示过的 id
+    if (punishIds.isEmpty()) { LJLLL(); return }                     // 隐藏
+    for (id in punishIds) if (id !in shownIds) { LJLLLL(); return }  // 显示
+    LJLLL()                                                          // 隐藏
+
+ChatBanTipsUI (extends RipsUI)             // 渲染，整个类只服务这一条横幅
+  a = DuxImageView ← 0x7f0a5e36  （铃铛图标）
+  b = DuxTextView  ← 0x7f0ac401  （标题文字）
+```
+
+这个 Logic 类只服务于这一条横幅，所以模块直接把 `LJLLLLLL()` 变成空操作，横幅永远不会被 show。
+另有「伪装无封禁记录」开关，兜底把 `ImBanInfo` 的封禁列表置空，让它自己走
+`no punish id → 隐藏` 分支。
+
+`0x7f0ac401` 这个 id 是在真机上用 Layout Inspect 抓出来核对过的。
 
 ## 环境要求
 
