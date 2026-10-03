@@ -15,6 +15,7 @@ object Prefs {
     const val KEY_HIDE_IM_BAN_TIPS = "hide_im_ban_tips"
     const val KEY_HIDE_SEND_STATUS = "hide_send_status"
     const val KEY_HIDE_TEXT = "hide_text"
+    const val KEY_STICKY_DIGG = "sticky_digg"
     const val KEY_HIDE_VIEWS = "hide_views"
     const val KEY_HIDE_VIEW_IDS = "hide_view_ids"
 

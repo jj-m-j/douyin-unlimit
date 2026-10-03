@@ -98,6 +98,9 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
         return false
     }
 
+    /** 让点赞保持已赞状态。 */
+    fun stickyDigg(): Boolean = flag(Prefs.KEY_STICKY_DIGG, true)
+
     private fun flag(key: String, default: Boolean): Boolean =
         runCatching { prefs?.getBoolean(key, default) }.getOrNull() ?: default
 

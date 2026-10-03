@@ -51,6 +51,7 @@ object SettingsBridge {
             hideText = p.getBoolean(Prefs.KEY_HIDE_TEXT, true),
             hideViews = p.getBoolean(Prefs.KEY_HIDE_VIEWS, true),
             hideViewIds = ViewIds.parse(p.getString(Prefs.KEY_HIDE_VIEW_IDS, null)),
+            stickyDigg = p.getBoolean(Prefs.KEY_STICKY_DIGG, true),
         )
     }
 
@@ -92,6 +93,11 @@ object SettingsBridge {
     }
 
     fun resetHideViewIds() = setHideViewIds(ViewIds.DEFAULT)
+
+    fun setStickyDigg(value: Boolean) {
+        settings = settings.copy(stickyDigg = value)
+        putBoolean(Prefs.KEY_STICKY_DIGG, value)
+    }
 
     private fun putBoolean(key: String, value: Boolean) {
         prefs?.edit()?.putBoolean(key, value)?.apply()

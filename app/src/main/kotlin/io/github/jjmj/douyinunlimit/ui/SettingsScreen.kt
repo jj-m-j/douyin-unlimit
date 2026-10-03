@@ -24,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.5.0"
+private const val VERSION = "1.6.0"
 
 /**
  * Miuix 的排版约定（来自官方 example）：
@@ -134,6 +134,22 @@ fun SettingsScreen() {
                     ArrowPreference(
                         title = "恢复默认",
                         onClick = { SettingsBridge.resetHideViewIds() },
+                    )
+                }
+            }
+
+            item(key = "digg") {
+                SmallTitle(text = "点赞")
+                Card(
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp),
+                ) {
+                    SwitchPreference(
+                        checked = settings.stickyDigg,
+                        onCheckedChange = { SettingsBridge.setStickyDigg(it) },
+                        title = "点赞保持已赞",
+                        summary = "点完不再回滚，点赞数和图标都留住",
                     )
                 }
             }
