@@ -16,6 +16,9 @@ class HookEntry : XposedModule() {
 
     private var prefs: SharedPreferences? = null
 
+    /** onPackageReady 会重复触发，用它保证 hook 只装一遍。 */
+    private val installed = java.util.concurrent.atomic.AtomicBoolean(false)
+
     override fun onModuleLoaded(param: XposedModuleInterface.ModuleLoadedParam) {
         prefs = runCatching { getRemotePreferences(Prefs.GROUP) }.getOrNull()
         Diag.log("onModuleLoaded 进程=${param.processName} prefs=${prefs != null}")
@@ -24,6 +27,15 @@ class HookEntry : XposedModule() {
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
         Diag.log("onPackageReady 触发，包名=${param.packageName}")
         if (param.packageName != TARGET_PACKAGE) return
+
+        // 关键：onPackageReady 在同一个进程里会被调用多次（真机实测 2 次），
+        // 不拦住就会把所有 hook 装两遍——不仅白白翻倍开销，还会破坏有状态的逻辑：
+        // 比如双击检测，两个拦截器共用同一个时间戳，第一个写完后第二个立刻看到
+        // 间隔 0ms，于是**每一次单击都被判成双击**。
+        if (!installed.compareAndSet(false, true)) {
+            Diag.log("onPackageReady 重复触发，已跳过（避免重复挂载）")
+            return
+        }
 
         val rules = RuleSource(prefs)
 

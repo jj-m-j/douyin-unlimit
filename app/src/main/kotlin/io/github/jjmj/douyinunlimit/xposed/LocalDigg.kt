@@ -290,9 +290,15 @@ internal object LocalDigg {
         }
 
         val liked = !icon.isSelected
+
+        // 顺序很关键：必须在设置选中态【之前】播动画。
+        // DiggAnimationView.LJIIIZ 会读 view.isSelected()——
+        // 已选中就退化成「只缩放」，未选中才走心形特效分支。
+        // 而且 onlyScale 参数必须传 false，传 true 会直接从第一行跳进缩放分支。
+        if (liked) playLikeAnimation(icon, onlyScale = false)
+
         icon.isSelected = liked
         icon.refreshDrawableState()
-        if (liked) playLikeAnimation(icon)
 
         val before = count?.text?.toString()
         if (count != null) {
@@ -311,41 +317,56 @@ internal object LocalDigg {
     private var animationEntryResolved = false
 
     /**
-     * 优先用抖音自己的点赞动画入口（`DiggAnimationView` 上
-     * `(DiggAnimationView, boolean) -> void` 那个方法），找不到就用自己的缩放回弹兜底。
+     * 优先用抖音自己的点赞动画入口。
+     *
+     * `DiggAnimationView` 上是 `(DiggAnimationView, boolean onlyScale) -> void` 那个方法
+     * （smali 里的 `LJIIJJI`），它转调 `LJIIIZ(view, onlyScale, null)`：
+     *
+     *   onlyScale == true            -> 只缩放（最次的效果）
+     *   onlyScale == false && !选中  -> 心形特效（真正的原生动画）
+     *   已选中                        -> 退化成缩放
+     *
+     * 所以必须传 false，并且由调用方保证此刻还没设置选中态。
      */
-    private fun playLikeAnimation(icon: ImageView) {
-        if (icon.javaClass.name == DIGG_ICON_CLASS) {
-            if (!animationEntryResolved) {
-                animationEntryResolved = true
-                animationEntry = icon.javaClass.declaredMethods.firstOrNull {
-                    it.returnType == Void.TYPE &&
-                        it.parameterCount == 2 &&
-                        it.parameterTypes[0] == icon.javaClass &&
-                        it.parameterTypes[1] == Boolean::class.javaPrimitiveType
-                }?.also { runCatching { it.isAccessible = true } }
-                Diag.log("digg", "抖音点赞动画入口=${animationEntry?.name ?: "未找到，用内置缩放动画"}")
-            }
-
-            val played = runCatching {
-                val entry = animationEntry ?: return@runCatching false
-                if (Modifier.isStatic(entry.modifiers)) {
-                    entry.invoke(null, icon, true)
-                } else {
-                    entry.invoke(icon, icon, true)
-                }
-                true
-            }.onFailure {
-                // 上一版这里没有日志，异常被静默吞掉，表现为「退化成了兜底动画」却查不出原因
-                Diag.debug("digg", "调抖音动画入口 ${animationEntry?.name} 失败：${it.javaClass.simpleName}: ${it.message}")
-            }.getOrDefault(false)
-
-            if (played) {
-                Diag.debug("digg", "已调用抖音原生点赞动画")
-                return
-            }
+    private fun playLikeAnimation(icon: ImageView, onlyScale: Boolean) {
+        if (icon.javaClass.name != DIGG_ICON_CLASS) {
+            bounce(icon)
+            return
         }
-        bounce(icon)
+
+        if (!animationEntryResolved) {
+            animationEntryResolved = true
+            animationEntry = icon.javaClass.declaredMethods.firstOrNull {
+                it.returnType == Void.TYPE &&
+                    it.parameterCount == 2 &&
+                    it.parameterTypes[0] == icon.javaClass &&
+                    it.parameterTypes[1] == Boolean::class.javaPrimitiveType
+            }?.also { runCatching { it.isAccessible = true } }
+            Diag.log("digg", "抖音点赞动画入口=${animationEntry?.name ?: "未找到，用内置缩放动画"}")
+        }
+
+        val entry = animationEntry
+        if (entry == null) {
+            bounce(icon)
+            return
+        }
+
+        val ok = runCatching {
+            if (Modifier.isStatic(entry.modifiers)) {
+                entry.invoke(null, icon, onlyScale)
+            } else {
+                entry.invoke(icon, icon, onlyScale)
+            }
+            true
+        }.onFailure {
+            Diag.debug("digg", "调抖音动画入口 ${entry.name} 失败：${it.javaClass.simpleName}: ${it.message}")
+        }.getOrDefault(false)
+
+        if (ok) {
+            Diag.debug("digg", "已调用抖音原生点赞动画（onlyScale=$onlyScale）")
+        } else {
+            bounce(icon)
+        }
     }
 
     /** 兜底动画：放大再弹回。 */
