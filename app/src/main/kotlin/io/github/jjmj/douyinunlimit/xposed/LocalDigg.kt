@@ -1,5 +1,6 @@
 package io.github.jjmj.douyinunlimit.xposed
 
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -10,7 +11,7 @@ import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
 /**
- * 完全由模块实现的本地点赞：不经过抖音任何接口，涵盖两个入口。
+ * 完全由模块实现的本地点赞：不经过抖音任何接口，涵盖三个入口。
  *
  * ## 入口一：点击右侧的点赞图标
  *
