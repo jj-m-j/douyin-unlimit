@@ -2,6 +2,7 @@ package io.github.jjmj.douyinunlimit.xposed
 
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import io.github.libxposed.api.XposedModule
@@ -74,18 +75,128 @@ internal object RestrictionGuard {
     /** 拦下「显示」的次数。有它才能在日志里区分「没命中」和「命中但无效」。 */
     private val blockHits = AtomicInteger(0)
 
+    /** 压住发送失败图标的次数。 */
+    private val iconHits = AtomicInteger(0)
+
     fun install(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
         hookSystemToast(module, rules)
         for (name in TOAST_CLASSES) hookDuxToast(module, loader, name, rules)
 
         hookImBanTips(module, loader, rules)
+        hookSendFailIcon(module, loader, rules)
 
-        Diag.log(
-            "tips",
-            "聊天发送失败图标：按 ${Targets.SEND_FAIL_ICON_CLASS} + " +
-                "#0x%08x 压制（由压制层处理）".format(Targets.SEND_FAIL_ICON_ID),
-        )
         Diag.log("tips", "限制提示类 hook 安装完成")
+    }
+
+    // ---------------------------------------------------------------- 发送失败图标
+
+    /**
+     * 聊天里那条「发送失败」的红色叹号（真机视图树：
+     * `com.ss.android.ugc.exview.ImImageView{... #7f0ab151 app:id/04_ ...}`）。
+     *
+     * ## 为什么不能只拦 `View.setVisibility`
+     *
+     * 因为这个类**自己重写了 `setVisibility`**：
+     *
+     * ```java
+     * ImImageView.setVisibility(int v) {
+     *     ImageView.setVisibility(v);        // 走的是 invoke-super
+     *     setImageResource(...);             // 顺便把图重新设一遍
+     * }
+     * ImImageView.onAttachedToWindow() { ...; getVisibility(); setImageResource(...); }
+     * ```
+     *
+     * 应用里拿着 `ImImageView` 引用调 `setVisibility(VISIBLE)` 时，虚分派落到**子类方法**，
+     * 不会经过挂在 `View.setVisibility` 上的钩子。而且它继承链上的方法都很短，
+     * 随时可能被 ART 内联（见 §「不要 hook 抖音自研的短方法」）。
+     *
+     * ## 所以用「反射构造」这个内联不了的入口
+     *
+     * 布局里的 View 是 `LayoutInflater` 通过 `constructor.newInstance()` **反射**造出来的，
+     * 反射调用无法被内联 —— 所以它的构造方法一定会走到。在这里读一下 id，
+     * 命中就登记进压制表并直接按掉，之后任何显示请求都会被压成 GONE。
+     *
+     * 同时额外挂一份**子类的** `setVisibility`，两条路一起堵。
+     */
+    private fun hookSendFailIcon(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
+        val clazz = Targets.load(loader, Targets.SEND_FAIL_ICON_CLASS)
+        if (clazz == null) {
+            Diag.log("tips", "找不到 ${Targets.SEND_FAIL_ICON_CLASS}（发送失败图标）")
+            return
+        }
+
+        val ctors = Targets.constructorsOf(clazz)
+        var hookedCtors = 0
+        for (ctor in ctors) {
+            runCatching {
+                module.hook(ctor).intercept { chain ->
+                    val result = chain.proceed()
+                    considerIcon(chain.thisObject, rules)
+                    result
+                }
+                hookedCtors++
+            }
+        }
+        Diag.log("tips", "发送失败图标：已挂钩 ${clazz.simpleName} 的 $hookedCtors/${ctors.size} 个构造方法")
+
+        val setVisibility = clazz.declaredMethods.firstOrNull {
+            it.name == "setVisibility" && it.parameterCount == 1
+        }
+        if (setVisibility == null) {
+            Diag.log("tips", "发送失败图标：${clazz.simpleName} 没有自己重写 setVisibility")
+            return
+        }
+
+        runCatching {
+            module.hook(setVisibility).intercept { chain ->
+                if (isSendFailIcon(chain.thisObject) && rules.hideTips()) {
+                    reportIconHit()
+                    alsoHideWrapper(chain.thisObject, rules)
+                    return@intercept chain.proceed(arrayOf<Any?>(View.GONE))
+                }
+                chain.proceed()
+            }
+            Diag.log("tips", "发送失败图标：已挂钩 ${clazz.simpleName}.setVisibility(int)")
+        }.onFailure { Diag.log("tips", "发送失败图标：setVisibility 挂载失败: $it") }
+    }
+
+    /**
+     * 顺手把「只包着这一个图标」的容器也藏掉。
+     *
+     * 真机视图树里，图标外面套着一个 89x55 的 `FrameLayout`（图标本体是居中的 55x55）。
+     * 只把图标 GONE 的话，那个容器还在：占着位置、而且还接得住点击
+     * （点它会弹重发提示）。所以只在这个容器**恰好只有一个孩子**时才一起藏 ——
+     * 判据足够窄，不会连带藏掉别的内容。
+     */
+    private fun alsoHideWrapper(instance: Any?, rules: RuleSource) {
+        val view = instance as? View ?: return
+        val wrapper = view.parent as? FrameLayout ?: return
+        if (wrapper.childCount != 1) return
+        if (!TextHider.markTip(wrapper)) return
+
+        Diag.log("tips", "已登记发送失败图标的外层容器（只有一个孩子）")
+        if (rules.hideTips()) wrapper.visibility = View.GONE
+    }
+
+    /** 构造完成时调用：是这个图标就登记进压制表，并立刻按掉。 */
+    private fun considerIcon(instance: Any?, rules: RuleSource) {
+        val view = instance as? View ?: return
+        if (!isSendFailIcon(view)) return
+        if (!TextHider.markTip(view)) return
+
+        Diag.log("tips", "已登记发送失败图标 #0x%08x，后续显示请求都会被压成 GONE".format(view.id))
+        if (rules.hideTips()) view.visibility = View.GONE
+    }
+
+    private fun isSendFailIcon(instance: Any?): Boolean {
+        val view = instance as? View ?: return false
+        return view.id == Targets.SEND_FAIL_ICON_ID
+    }
+
+    private fun reportIconHit() {
+        if (iconHits.incrementAndGet() <= SAMPLE_LIMIT) {
+            Diag.log("tips", "压住发送失败图标 #0x%08x".format(Targets.SEND_FAIL_ICON_ID))
+        }
     }
 
     // ---------------------------------------------------------------- 系统 Toast
