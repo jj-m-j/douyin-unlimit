@@ -61,8 +61,8 @@ class HookEntry : XposedModule() {
 
     private inline fun install(name: String, block: () -> Unit) {
         runCatching(block)
-            .onSuccess { log(Log.INFO, TAG, "$name guard installed") }
-            .onFailure { log(Log.ERROR, TAG, "$name guard failed", it) }
+            .onSuccess { Diag.log("install", "$name guard 已安装") }
+            .onFailure { Diag.log("install", "$name guard 安装失败: $it") }
     }
 
     private companion object {
