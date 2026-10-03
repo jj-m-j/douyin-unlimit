@@ -1,0 +1,85 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK components
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare signing key
+        run: |
+          KEYSTORE="$RUNNER_TEMP/release.jks"
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$KEYSTORE"
+            {
+              echo "SIGNING_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}"
+              echo "SIGNING_KEY_ALIAS=${{ secrets.KEY_ALIAS }}"
+              echo "SIGNING_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"
+            } >> "$GITHUB_ENV"
+          else
+            # 没有配置 secret 时现场生成。注意：每次构建签名都不同，
+            # 用户覆盖安装必须先卸载。要固定签名请设置 KEYSTORE_BASE64。
+            keytool -genkeypair -v -keystore "$KEYSTORE" \
+              -alias douyin-unlimit -keyalg RSA -keysize 4096 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=DouyinUnlimit, OU=Dev, O=DouyinUnlimit, C=CN"
+            {
+              echo "SIGNING_STORE_PASSWORD=android"
+              echo "SIGNING_KEY_ALIAS=douyin-unlimit"
+              echo "SIGNING_KEY_PASSWORD=android"
+            } >> "$GITHUB_ENV"
+          fi
+          echo "SIGNING_STORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
+
+      - name: Build release
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Verify APK
+        run: |
+          set -e
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n1)
+          echo "APK: $APK"
+          echo "--- xposed 元数据 ---"
+          unzip -l "$APK" | grep -E 'META-INF/xposed/' || (echo "缺少 xposed 元数据！" && exit 1)
+          echo "--- 签名 ---"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK"
+          echo "=== APK=$APK" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: douyin-unlimit
+          path: app/build/outputs/apk/release/*.apk
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/*.apk
+          generate_release_notes: true

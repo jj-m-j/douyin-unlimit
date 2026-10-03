@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">抖音伪装</string>
+    <string name="module_description">让抖音看起来没有被限制：隐藏「已封禁」类吐司与限制提示。</string>
+</resources>
