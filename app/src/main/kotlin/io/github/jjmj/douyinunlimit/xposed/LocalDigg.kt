@@ -97,36 +97,50 @@ internal object LocalDigg {
 
                 val host = chain.thisObject as? View ?: return@intercept chain.proceed()
                 val event = chain.args.getOrNull(0) as? MotionEvent ?: return@intercept chain.proceed()
-                if (event.actionMasked != MotionEvent.ACTION_UP) return@intercept chain.proceed()
 
-                val now = System.currentTimeMillis()
-                val gap = now - lastVideoTapAt
-                val isDouble = gap < DOUBLE_TAP_WINDOW_MS
-                lastVideoTapAt = now
-                Diag.debug("digg", "视频区域 ACTION_UP，距上次 ${gap}ms，双击=$isDouble")
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        val now = System.currentTimeMillis()
+                        val gap = now - lastVideoDownAt
+                        lastVideoDownAt = now
+                        // 用「两次按下」的间隔判定——这正是 Android GestureDetector 的做法，
+                        // 比用抬手更可靠（抬手可能被父容器截走）
+                        pendingDoubleTap = gap < DOUBLE_TAP_WINDOW_MS
+                        Diag.debug("digg", "视频区域 ACTION_DOWN，距上次 ${gap}ms，疑似双击=$pendingDouble")
+                        chain.proceed()
+                    }
 
-                if (!isDouble) return@intercept chain.proceed()
+                    MotionEvent.ACTION_UP -> {
+                        if (!pendingDoubleTap) return@intercept chain.proceed()
+                        pendingDoubleTap = false
 
-                val button = findLikeButtonInSameItem(host)
-                if (button != null) {
-                    val icon = findIconInButton(button)
-                    val count = findSiblingCount(button)
-                    applyLocalLike(icon, count)
-                    Diag.log("digg", "双击屏幕点赞已本地化")
-                } else {
-                    Diag.log("digg", "双击识别到了，但没找到同一项里的点赞按钮")
+                        val button = findLikeButtonInSameItem(host)
+                        if (button != null) {
+                            val icon = findIconInButton(button)
+                            val count = findSiblingCount(button)
+                            applyLocalLike(icon, count)
+                            Diag.log("digg", "双击屏幕点赞已本地化")
+                        } else {
+                            Diag.log("digg", "双击识别到了，但没找到同一项里的点赞按钮")
+                        }
+                        // 吞掉这次抬手，抖音的手势检测看不到它，双击点赞请求不会发出
+                        true
+                    }
+
+                    else -> chain.proceed()
                 }
-                // 吞掉这次抬手，抖音的手势检测看不到它，双击点赞请求不会发出
-                true
             }
-            Diag.log("digg", "入口三就绪：$GESTURE_HOST.onTouchEvent（自己在触摸层数双击）")
+            Diag.log("digg", "入口三就绪：$GESTURE_HOST.onTouchEvent（按按下间隔数双击）")
         }.onFailure {
             Diag.log("digg", "入口三挂载失败: $it")
         }
     }
 
-    private var lastVideoTapAt = 0L
-    private const val DOUBLE_TAP_WINDOW_MS = 350L
+    private var lastVideoDownAt = 0L
+
+    private var pendingDoubleTap = false
+
+    private const val DOUBLE_TAP_WINDOW_MS = 450L
 
     /** 从视频触摸层往上找同一项里的点赞按钮。 */
     private fun findLikeButtonInSameItem(from: View): View? {
