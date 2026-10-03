@@ -1,5 +1,6 @@
 package io.github.jjmj.douyinunlimit.xposed
 
+import android.app.Application
 import android.content.SharedPreferences
 import android.util.Log
 import io.github.libxposed.api.XposedModule
@@ -23,20 +24,39 @@ class HookEntry : XposedModule() {
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
         if (param.packageName != TARGET_PACKAGE) return
 
-        Diag.startSession("package ${param.packageName} ready")
-        Diag.logFileLocation()
-
-        // hook 一次性全部装上，开关只影响拦截时的行为，改配置不用重启抖音
         val rules = RuleSource(prefs)
+
+        // Application.onCreate 必定触发一次：既作为「模块确实注入了」的铁证，
+        // 也用来在正确的时机初始化日志文件（onPackageReady 时 Application 还没创建）
+        install("application") { hookApplicationReady(this) }
 
         install("toast") { ToastGuard.install(this, param.classLoader, rules) }
         install("im ban tips") { ImBanGuard.install(this, param.classLoader, rules) }
         install("send status") { SendStatusGuard.install(this, param.classLoader, rules) }
         install("text") { TextGuard.install(this, rules) }
         install("view") { ViewGuard.install(this, rules) }
-        install("digg") { DiggGuard.install(this, param.classLoader, rules) }
+        install("net") { NetGuard.install(this, param.classLoader, rules) }
+    }
 
-        Diag.log("all guards installed")
+    /**
+     * 挂钩 Application.onCreate。这是注入成功的可靠信号：
+     * 只要抖音进程起来了就一定会走一次，不受任何业务逻辑影响。
+     */
+    private fun hookApplicationReady(module: XposedModule) {
+        val onCreate = runCatching {
+            Application::class.java.getDeclaredMethod("onCreate")
+        }.getOrNull() ?: return
+
+        runCatching {
+            module.hook(onCreate).intercept { chain ->
+                val result = chain.proceed()
+                runCatching {
+                    Diag.startSession("抖音进程 Application.onCreate")
+                    Diag.log("模块已注入抖音进程，hook 全部就绪")
+                }
+                result
+            }
+        }
     }
 
     private inline fun install(name: String, block: () -> Unit) {

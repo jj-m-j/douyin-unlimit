@@ -24,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.6.3"
+private const val VERSION = "1.7.0"
 
 /**
  * Miuix 的排版约定（来自官方 example）：
@@ -146,10 +146,10 @@ fun SettingsScreen() {
                         .padding(bottom = 12.dp),
                 ) {
                     SwitchPreference(
-                        checked = settings.stickyDigg,
-                        onCheckedChange = { SettingsBridge.setStickyDigg(it) },
-                        title = "点赞保持已赞",
-                        summary = "点完不再回滚，点赞数和图标都留住",
+                        checked = settings.blockDiggUpload,
+                        onCheckedChange = { SettingsBridge.setBlockDiggUpload(it) },
+                        title = "拦截点赞上传",
+                        summary = "点赞请求不发到服务器，本地状态就不会被回滚",
                     )
                 }
             }

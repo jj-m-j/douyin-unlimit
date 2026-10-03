@@ -8,5 +8,5 @@ data class ModuleSettings(
     val hideText: Boolean = true,
     val hideViews: Boolean = true,
     val hideViewIds: List<Int> = ViewIds.DEFAULT,
-    val stickyDigg: Boolean = true,
+    val blockDiggUpload: Boolean = true,
 )

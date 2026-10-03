@@ -11,13 +11,14 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * 诊断日志。同时写 logcat 和文件。
  *
- * 为什么要写文件：logcat 的环形缓冲很小，抖音启动后很快就滚掉了；
- * 用 `-s TAG` 过滤也容易因为参数写错而一无所获。写文件可以事后慢慢看。
+ * 写文件的原因：logcat 环形缓冲太小，抖音启动后很快滚掉；`-s TAG` 过滤也容易踩坑。
  *
  * 文件位置（抖音的外部私有目录，MT 用 root 能直接打开）：
  *   /storage/emulated/0/Android/data/com.ss.android.ugc.aweme/files/unlimit-diag.log
  *
- * 总条数上限封死，避免滚 feed 时把文件写爆。
+ * 注意：解析文件路径**失败时不能缓存失败结果**——注入早期 Application 还没创建，
+ * `ActivityThread.currentApplication()` 会返回 null；如果那时把「已解析」置位，
+ * 后面就永远拿不到文件了（上一版就是这么把日志弄丢的）。
  */
 internal object Diag {
 
@@ -32,44 +33,52 @@ internal object Diag {
     private var file: File? = null
 
     @Volatile
-    private var resolved = false
+    private var truncated = false
 
-    /** 进程注入时调用一次：清空上次内容，写下文件位置方便定位。 */
+    /** 进程就绪时调用：写文件头。此时 Application 已创建，能正常解析路径。 */
     fun startSession(label: String) {
-        val target = resolveFile() ?: return
+        val target = resolve() ?: return
         runCatching {
             target.parentFile?.mkdirs()
             target.writeText("=== $label @ ${now()} ===\n\n")
         }
+        truncated = true
+        Log.i(TAG, "diag file: ${target.absolutePath}")
     }
 
     fun log(key: String, message: String) {
-        val n = total.incrementAndGet()
-        if (n > LIMIT) return
+        if (total.incrementAndGet() > LIMIT) return
         val line = "[$key] $message"
         Log.i(TAG, line)
-        val target = resolveFile() ?: return
-        runCatching { target.appendText("${now()} $line\n") }
+        append(line)
     }
 
     fun log(message: String) = log("diag", message)
 
-    /** 把日志文件路径也打出来，方便用户直接去拿。 */
-    fun logFileLocation() {
-        Log.i(TAG, "diag file: ${file?.absolutePath ?: "unavailable"}")
+    private fun append(line: String) {
+        val target = resolve() ?: return
+        runCatching {
+            if (!truncated) {
+                target.parentFile?.mkdirs()
+                target.writeText("=== session @ ${now()} ===\n\n")
+                truncated = true
+            }
+            target.appendText("${now()} $line\n")
+        }
     }
 
-    private fun resolveFile(): File? {
-        if (resolved) return file
-        resolved = true
-        file = runCatching {
+    /** 只有成功才缓存；失败留到下次重试。 */
+    private fun resolve(): File? {
+        file?.let { return it }
+        val resolved = runCatching {
             val activityThread = Class.forName("android.app.ActivityThread")
             val app = activityThread.getMethod("currentApplication").invoke(null) as? Context
                 ?: return null
             val dir = app.getExternalFilesDir(null) ?: app.filesDir ?: return null
             File(dir, FILE_NAME)
         }.getOrNull()
-        return file
+        if (resolved != null) file = resolved
+        return resolved
     }
 
     private fun now(): String =
