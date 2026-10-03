@@ -40,8 +40,6 @@
   撤销这件事在 `FeedDiggPresenter` 里只有一个出口（收 `Exception` 的失败处理方法），
   跳过它即可，点击和原生特效完全不受影响。
 
-更详细的逆向过程和踩过的坑见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
-
 ## 环境
 
 - Android 10+（API 29+）

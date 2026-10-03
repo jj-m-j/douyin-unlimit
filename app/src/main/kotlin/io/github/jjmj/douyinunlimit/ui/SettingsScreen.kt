@@ -162,9 +162,7 @@ fun SettingsScreen() {
                     SwitchPreference(
                         checked = settings.stickyDigg,
                         onCheckedChange = { SettingsBridge.setStickyDigg(it) },
-                        title = "点赞被驳回也不回滚",
-                        summary = "点击和双击都按原生走（动画、特效都在），只在服务端驳回、" +
-                            "抖音要撤销点赞的那一刻把它按住",
+                        title = "假装点赞成功了",
                     )
                 }
             }
