@@ -11,11 +11,10 @@ import io.github.jjmj.douyinunlimit.data.Prefs
  *
  * | 用途 | 来源 | 为什么 |
  * |---|---|---|
- * | 吐司拦截 | **内置**限制词（[Prefs.TOAST_BLOCK_WORDS]） | 开关一开就该生效，不该要求用户先维护一份词表 |
- * | 文字兜底 | **用户自己填**（默认空） | 按文字匹配有误伤正常内容的风险，不能预置 |
+ * | 吐司 + 常驻文字 | **内置**限制词（[Prefs.BUILTIN_BLOCK_WORDS]） | 「别提示我被限制了」默认开着，必须开箱即用 |
+ * | 文字兜底 | **用户自己填**（默认空） | 用户写的词边界不可预期，单独一个开关让他自己权衡 |
  *
  * v1.13 让两者共用同一份用户词表，结果是「关键词清空 -> 吐司拦截也一起失效」。
- * 拆开之后两边各自独立。
  *
  * ## 功耗设计
  *
@@ -26,7 +25,7 @@ import io.github.jjmj.douyinunlimit.data.Prefs
  *  - 节流用**调用计数器**而不是 `System.nanoTime()`（时间调用比自增贵得多）
  *  - 计数器刻意不用 AtomicInteger：热点上 CAS 会跨线程争抢，而这里算错一两次
  *    只意味着「晚一点同步」，没有任何正确性影响，用普通 Int 最便宜
- *  - 每 1024 次热路径调用才真正读一次 SharedPreferences
+ *  - 每 1024 次热路径调用才真正读一次 SharedPreferences（[tick]）
  *  - 命中判定是纯数组扫描，无装箱、无字符串拼接
  */
 internal class RuleSource(private val prefs: SharedPreferences?) {
@@ -79,50 +78,50 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
     // ---------------------------------------------------------------- 热路径
 
     /**
-     * 文字类拦截的开关。顺带做节流同步。
+     * 热路径节流同步：每 1024 次调用真正读一次配置。
      *
-     * 注意这里**不能**在开关为 false 时提前返回：那样一旦关掉就再也不会同步，
-     * 用户重新打开开关也永远不会生效。
+     * 由 setText 这类必然高频的入口调用一次即可 —— 它同时负责让
+     * [hideTips] / [textHidingOn] 这些缓存标志保持新鲜。
      */
-    fun textHidingOn(): Boolean {
+    fun tick() {
         if (++tick >= TICK_LIMIT) {
             tick = 0
             sync()
         }
-        return hideTextFlag && keywords.isNotEmpty()
     }
 
-    /** 纯扫描，调用前必须已经过 [textHidingOn]。 */
-    fun shouldHideText(text: CharSequence): Boolean {
+    /** 纯扫描：是不是内置限制文案。 */
+    fun matchesBuiltin(text: CharSequence): Boolean = matches(Prefs.BUILTIN_BLOCK_WORDS, text)
+
+    /** 纯扫描：是不是用户自己填的关键词。 */
+    fun matchesKeyword(text: CharSequence): Boolean = matches(keywords, text)
+
+    private fun matches(words: Array<String>, text: CharSequence): Boolean {
         if (text.length < MIN_KEYWORD_LENGTH) return false
-        val current = keywords
-        for (i in current.indices) {
-            val keyword = current[i]
-            if (keyword.length <= text.length && text.contains(keyword)) return true
+        for (i in words.indices) {
+            val word = words[i]
+            if (word.length <= text.length && text.contains(word)) return true
         }
         return false
     }
 
     // ---------------------------------------------------------------- 冷路径
 
-    /**
-     * 吐司文案判定，用**内置**限制词，和用户的词表无关。
-     *
-     * v1.13 这里每次调用都 `Keywords.parse(prefs.getString(...))` ——
-     * 也就是每条吐司都做一次字符串 split + List 分配 + 逐项 trim，纯浪费。
-     * 现在走常量数组。
-     */
+    /** 吐司文案判定，同样用内置限制词。 */
     fun shouldBlockToast(text: String): Boolean {
         if (text.isEmpty()) return false
-        val current = Prefs.TOAST_BLOCK_WORDS
+        val current = Prefs.BUILTIN_BLOCK_WORDS
         for (i in current.indices) {
             if (text.contains(current[i])) return true
         }
         return false
     }
 
-    /** 隐藏一切限制提示（吐司 / 消息页横幅 / 聊天发送状态）。 */
+    /** 隐藏一切限制提示（吐司 / 横幅 / 发送状态 / 服务端下发的限制文案）。 */
     fun hideTips(): Boolean = hideTipsFlag
+
+    /** 关键词兜底是否生效。没有词表时它本来就是空转的。 */
+    fun textHidingOn(): Boolean = hideTextFlag && keywords.isNotEmpty()
 
     /** 点赞被驳回后不回滚。 */
     fun stickyDigg(): Boolean = stickyDiggFlag
@@ -144,7 +143,7 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
         /** 2^10 */
         const val TICK_LIMIT = 1024
 
-        /** 比最短的关键词还短的文字不可能命中，直接跳过扫描。 */
+        /** 比最短的词还短的文字不可能命中，直接跳过扫描。 */
         const val MIN_KEYWORD_LENGTH = 2
 
         const val DEBUG_CHECK_INTERVAL_MS = 2000L

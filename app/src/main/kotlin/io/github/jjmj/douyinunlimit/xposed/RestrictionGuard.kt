@@ -78,11 +78,20 @@ internal object RestrictionGuard {
 
     private const val SAMPLE_LIMIT = 40
 
+    /** 捕获相关的诊断日志条数上限（含「进入」和失败）。 */
+    private const val CAPTURE_LOG_LIMIT = 10
+
     /** 拦下「显示」的次数。有它才能在日志里区分「没命中」和「命中但无效」。 */
     private val blockHits = AtomicInteger(0)
 
     /** 登记过的控件个数。 */
     private val captured = AtomicInteger(0)
+
+    /** 进入捕获钩子的次数。用它区分「钩子没触发」和「触发了但抓不到控件」。 */
+    private val enterHits = AtomicInteger(0)
+
+    /** 登记失败的次数，只报前几条，避免刷屏。 */
+    private val captureMissed = AtomicInteger(0)
 
     fun install(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
         hookSystemToast(module, rules)
@@ -292,32 +301,55 @@ internal object RestrictionGuard {
     ) {
         if (fields.isEmpty()) return
 
+        val where = "${target.declaringClass.simpleName}.$label" +
+            "(${target.parameterTypes.joinToString(",") { it.simpleName }})"
+
         runCatching {
             module.hook(target).intercept { chain ->
                 val result = chain.proceed()
-                captureAll(chain.thisObject, fields, rules)
+
+                // 采样记一行「钩子进来了」。没有它就没法区分
+                // 「这个方法压根没被调用」和「调用了但里面抓不到控件」——
+                // 上一轮就是因为只有后半段的日志，才看不出是哪种。
+                if (enterHits.incrementAndGet() <= CAPTURE_LOG_LIMIT) {
+                    Diag.log("tips", "聊天发送状态：进入 $where")
+                }
+                captureAll(chain.thisObject, fields, rules, where)
                 result
             }
-            Diag.log(
-                "tips",
-                "聊天发送状态：已挂钩 ${target.declaringClass.simpleName}" +
-                    ".${label}(${target.parameterTypes.joinToString(",") { it.simpleName }})",
-            )
-        }.onFailure { Diag.log("tips", "聊天发送状态：$label 挂载失败: $it") }
+            Diag.log("tips", "聊天发送状态：已挂钩 $where")
+        }.onFailure { Diag.log("tips", "聊天发送状态：$where 挂载失败: $it") }
     }
 
-    private fun captureAll(instance: Any?, fields: List<Field>, rules: RuleSource) {
-        if (instance == null) return
+    private fun captureAll(instance: Any?, fields: List<Field>, rules: RuleSource, where: String) {
+        if (instance == null) {
+            reportOnce("$where：thisObject 为 null，抓不到控件")
+            return
+        }
 
         for (field in fields) {
-            val view = runCatching { field.get(instance) as? View }.getOrNull() ?: continue
+            val value = runCatching { field.get(instance) }.getOrNull()
+            val view = value as? View
+            if (view == null) {
+                reportOnce("$where：字段 ${field.name} 读不到 View（值=$value）")
+                continue
+            }
             if (!TextHider.markTip(view)) continue
 
             if (captured.incrementAndGet() <= SAMPLE_LIMIT) {
-                Diag.log("tips", "已登记 ${view.javaClass.simpleName} 控件（显示请求会被压成 GONE）")
+                Diag.log(
+                    "tips",
+                    "已登记 ${view.javaClass.simpleName}（${field.name}）—— 显示请求会被压成 GONE",
+                )
             }
             // 布局里默认 VISIBLE 的情况：登记的同时直接按掉
             if (rules.hideTips()) view.visibility = View.GONE
+        }
+    }
+
+    private fun reportOnce(message: String) {
+        if (captureMissed.incrementAndGet() <= CAPTURE_LOG_LIMIT) {
+            Diag.log("tips", "登记失败：$message")
         }
     }
 
