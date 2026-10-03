@@ -1,175 +1,157 @@
 package io.github.jjmj.douyinunlimit.xposed
 
 import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import io.github.libxposed.api.XposedModule
-import java.lang.reflect.Field
-import java.lang.reflect.Modifier
 
 /**
  * 完全由模块实现的本地点赞：不经过抖音任何接口。
  *
- * ## 走过的弯路（都记下来，避免以后再踩）
+ * ## 按钮是怎么定位到的
  *
- * 1. **网络层**：`OkHttpClient.newCall` 和 `SsHttpCall.enqueue` 都成功挂上了，真机实测
- *    整轮使用**零请求经过它们**——抖音 API 走 TTNet（Cronet 原生栈），Java 侧拦不到。
- * 2. **`DiggAnimationView.onTouchEvent`**：挂上了但从未被调用。那是点赞*动画*的载体，
- *    不是能点的按钮。
- * 3. **`View.performClick` + 找 `VideoDiggView` 祖先**：也从未命中。
- *    原因：`VideoDiggView extends AsyncBaseVideoItemView`，**它本身不是 View**，
- *    而是包着 View 的控制器，所以它不可能出现在任何视图的祖先链里。
+ * 靠「点击探针」（详细调试日志）在真机上抓出来的，证据链完整：
  *
- * ## 现在挂在哪
+ *   [click*] 点击 android.widget.FrameLayout #0x7f0a309c
+ *            ← LinearLayout(0x7f0a30b1) < HPFrameLayout(0x7f0a30a4)
+ *            < FeedRightScaleView(0x7f0a9ef5) < ...          ← 右侧操作栏
  *
- * 点睛之笔是不写死任何混淆名，全部运行时推导：
+ *   - 位于 FeedRightScaleView（抖音右侧那排 头像/点赞/评论/分享）
+ *   - 父容器 LinearLayout(0x7f0a30b1)，兄弟节点是 DuxTextView(0x7f0a309d) = 点赞数
+ *   - 两个 id 紧挨（309c / 309d），同一布局块分配
+ *   => LinearLayout[ FrameLayout(309c)=图标 , TextView(309d)=数字 ]
  *
- *   1. 从 `VideoDiggView` 的字段里，找出那个类型实现了 `View.OnClickListener` 的字段
- *      （smali 里是 `K:LY/ACListenerS197S0100000_38;`），拿到它的**运行时类型**
- *   2. 挂这个类型所有 `onClick*` 方法
- *   3. 每次触发时判断：这个 lambda 捕获的对象是不是 `VideoDiggView` 实例
- *      （R8 的 lambda 类会把捕获对象存在 `l0` 这类字段里）
- *      —— 是，就说明用户点的是点赞
- *   4. 由模块直接改图标选中态 + 点赞数，然后**不调用原方法**（吞掉）
- *      → 抖音的点赞逻辑不执行 → 请求不发 → 服务端无从驳回 → 没有回滚
+ * ## 走过的弯路（都记下来，避免重蹈）
  *
- * 这样即使抖音改名（`ACListenerS...` 后面那串数字、`onClick$56` 的编号、
- * `DiggAnimationView` 字段名）也照样能工作。
+ * 1. **网络层**：`OkHttpClient.newCall`、`SsHttpCall.enqueue` 都挂上了，真机实测
+ *    零请求经过——抖音 API 走 TTNet（Cronet 原生栈），Java 侧拦不到。
+ * 2. **`DiggAnimationView.onTouchEvent`**：挂上了但从未被调用。那是点赞*动画*载体，
+ *    不是按钮。
+ * 3. **`View.performClick` + 找 `VideoDiggView` 祖先**：从未命中。因为
+ *    `VideoDiggView extends AsyncBaseVideoItemView`——**它本身不是 View**，
+ *    而是包着 View 的控制器，不可能出现在视图祖先链里。
+ * 4. **`VideoDiggView` 的点击监听器**：挂上了 228 个 onClick* 方法也没命中，
+ *    按钮的监听器不在那个 lambda 类里。
+ *
+ * ## 现在的做法
+ *
+ * `View.performClick()` 是所有点击的必经之路（探针已实证点赞走它），
+ * 命中 `#0x7f0a309c` 就是点赞：
+ *
+ *   1. 找到图标（按钮内部的 DiggAnimationView，退化为第一个 ImageView）并置选中态
+ *   2. 找到兄弟节点的点赞数 TextView 并 +1
+ *   3. **返回 true 吞掉事件** → 抖音的点赞逻辑不执行 → 请求不发 → 服务端无从驳回
  *
  * ## 已知限制
  *
- * 抖音的数据模型仍是「未点赞」，视图被 RecyclerView 回收重绑后图标会还原
+ * 抖音的数据模型仍是「未点赞」，视图被 RecyclerView 回收重绑后图标会被刷回去
  * —— 滑走再滑回来，本地点赞会丢。
+ * 资源 id 是 aapt 打包时分配的，抖音升级后可能变化；届时用「详细调试日志」
+ * 的点击探针重新抓一次即可。
  */
 internal object LocalDigg {
 
-    private const val DIGG_WIDGET = "com.ss.android.ugc.aweme.feed.ui.VideoDiggView"
-    private const val DIGG_ICON = "com.ss.android.ugc.aweme.feed.widget.DiggAnimationView"
-    private const val TEXT_VIEW = "android.widget.TextView"
-    private const val ON_CLICK_LISTENER = "android.view.View\$OnClickListener"
+    /** 点赞按钮（FeedRightScaleView 里包着点赞图标的 FrameLayout）。 */
+    private const val LIKE_BUTTON_ID = 0x7f0a309c
 
-    private const val SAMPLE_LIMIT = 40
+    /** 点赞数文字（点赞按钮的兄弟节点）。 */
+    private const val LIKE_COUNT_ID = 0x7f0a309d
+
+    private const val DIGG_ICON_CLASS = "com.ss.android.ugc.aweme.feed.widget.DiggAnimationView"
+
+    private const val SAMPLE_LIMIT = 60
     private var sampleCount = 0
 
-    fun install(module: XposedModule, loader: ClassLoader, rules: RuleSource) {
-        val widgetClass = runCatching { Class.forName(DIGG_WIDGET, false, loader) }.getOrNull()
-        if (widgetClass == null) {
-            Diag.log("digg", "找不到 $DIGG_WIDGET")
-            return
-        }
-
-        val listenerInterface = runCatching { Class.forName(ON_CLICK_LISTENER, false, loader) }.getOrNull()
-        if (listenerInterface == null) {
-            Diag.log("digg", "找不到 $ON_CLICK_LISTENER")
-            return
-        }
-
-        // 运行时推导：点击监听器到底被混淆成了哪个类
-        val listenerClass = widgetClass.declaredFields
-            .map { it.type }
-            .firstOrNull { listenerInterface.isAssignableFrom(it) && it != listenerInterface }
-
-        if (listenerClass == null) {
-            Diag.log("digg", "$DIGG_WIDGET 里没有找到 OnClickListener 类型的字段")
-            return
-        }
-
-        val targets = listenerClass.declaredMethods.filter { it.name.startsWith("onClick") }
-        if (targets.isEmpty()) {
-            Diag.log("digg", "${listenerClass.name} 里没有 onClick 方法")
-            return
-        }
-
-        var hooked = 0
-        for (method in targets) {
-            runCatching {
-                module.hook(method).intercept { chain ->
-                    if (!rules.blockDiggUpload()) return@intercept chain.proceed()
-
-                    val lambda = chain.thisObject ?: chain.args.firstOrNull()
-                    val captured = capturedObject(lambda)
-                    if (captured != null && captured.javaClass === widgetClass) {
-                        applyLocalLike(captured)
-                        // 吞掉：抖音自己的点赞逻辑不执行，请求不会发出
-                        return@intercept null
-                    }
-
-                    chain.proceed()
-                }
-                hooked++
-            }
-        }
-
-        Diag.log(
-            "digg",
-            if (hooked == 0) {
-                "点赞监听器方法一个都没挂上（${listenerClass.name}）"
-            } else {
-                "已挂钩点赞监听器 ${listenerClass.name} 的 $hooked 个 onClick* 方法（拦截为纯本地）"
-            },
-        )
-    }
-
-    /** R8 的 lambda 类会把捕获对象存在 `l0` 这类字段里；取第一个非静态引用字段。 */
-    private fun capturedObject(lambda: Any?): Any? {
-        if (lambda == null) return null
-        return runCatching {
-            val field = lambda.javaClass.declaredFields.firstOrNull {
-                !Modifier.isStatic(it.modifiers) && !it.type.isPrimitive
-            } ?: return null
-            field.isAccessible = true
-            field.get(lambda)
+    fun install(module: XposedModule, rules: RuleSource) {
+        val performClick = runCatching {
+            View::class.java.getDeclaredMethod("performClick")
         }.getOrNull()
-    }
-
-    // ---- VideoDiggView 的字段：按类型取，混淆改名也不影响 ----
-
-    @Volatile
-    private var iconField: Field? = null
-
-    @Volatile
-    private var countField: Field? = null
-
-    @Volatile
-    private var fieldsResolved = false
-
-    private fun resolveFields(widget: Any) {
-        if (fieldsResolved) return
-        fieldsResolved = true
-        val cls = widget.javaClass
-        iconField = cls.declaredFields
-            .firstOrNull { it.type.name == DIGG_ICON }
-            ?.also { runCatching { it.isAccessible = true } }
-        countField = cls.declaredFields
-            .firstOrNull { it.type.name == TEXT_VIEW }
-            ?.also { runCatching { it.isAccessible = true } }
-        Diag.log(
-            "digg",
-            "VideoDiggView 字段定位：图标=${iconField?.name ?: "未找到"}，点赞数=${countField?.name ?: "未找到"}",
-        )
-    }
-
-    private fun applyLocalLike(widget: Any) {
-        resolveFields(widget)
-
-        val icon = runCatching { iconField?.get(widget) as? View }.getOrNull()
-        if (icon == null) {
-            Diag.log("digg", "拿不到点赞图标")
+        if (performClick == null) {
+            Diag.log("digg", "找不到 View.performClick")
             return
         }
 
-        val liked = !icon.isSelected
-        icon.isSelected = liked
-        icon.refreshDrawableState()
+        runCatching {
+            module.hook(performClick).intercept { chain ->
+                val view = chain.thisObject as? View ?: return@intercept chain.proceed()
 
-        val count = runCatching { countField?.get(widget) as? TextView }.getOrNull()
+                if (rules.blockDiggUpload() && view.id == LIKE_BUTTON_ID) {
+                    applyLocalLike(view)
+                    // 吞掉：抖音的点赞逻辑不执行，请求不会发出
+                    return@intercept true
+                }
+
+                chain.proceed()
+            }
+            Diag.log(
+                "digg",
+                "已挂钩 View.performClick，命中 #0x${LIKE_BUTTON_ID.toString(16)} 即本地点赞",
+            )
+        }.onFailure {
+            Diag.log("digg", "LocalDigg 挂载失败: $it")
+        }
+    }
+
+    private fun applyLocalLike(button: View) {
+        val icon = findIcon(button)
+        val count = findCount(button)
+
+        val liked = icon?.isSelected != true
+        icon?.let {
+            it.isSelected = liked
+            it.refreshDrawableState()
+        }
+
         val before = count?.text?.toString()
         if (count != null) {
             count.text = bumpCount(before, if (liked) 1 else -1)
         }
 
         if (sampleCount++ < SAMPLE_LIMIT) {
-            Diag.log("digg", "本地点赞 liked=$liked，点赞数 $before -> ${count?.text ?: "控件未定位"}")
+            Diag.log(
+                "digg",
+                "本地点赞 liked=$liked 图标=${icon?.javaClass?.simpleName ?: "未找到"}" +
+                    " 点赞数 $before -> ${count?.text ?: "未找到"}",
+            )
         }
+    }
+
+    /** 按钮内部找点赞图标：优先 DiggAnimationView，退化到第一个 ImageView。 */
+    private fun findIcon(button: View): ImageView? {
+        var fallback: ImageView? = null
+        fun walk(node: View) {
+            when {
+                node.javaClass.name == DIGG_ICON_CLASS -> {
+                    (node as? ImageView)?.let { fallback = it }
+                    return
+                }
+                node is ImageView && fallback == null -> fallback = node
+            }
+            if (node is ViewGroup) {
+                for (i in 0 until node.childCount) walk(node.getChildAt(i))
+            }
+        }
+        walk(button)
+        // DiggAnimationView 优先级最高，直接再找一次
+        return findDiggAnimationView(button) ?: fallback ?: (button as? ImageView)
+    }
+
+    private fun findDiggAnimationView(root: View): ImageView? {
+        if (root.javaClass.name == DIGG_ICON_CLASS) return root as? ImageView
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                findDiggAnimationView(root.getChildAt(i))?.let { return it }
+            }
+        }
+        return null
+    }
+
+    /** 点赞数是按钮的兄弟节点（同属那个 LinearLayout）。 */
+    private fun findCount(button: View): TextView? {
+        val parent = button.parent as? View
+        parent?.findViewById<View>(LIKE_COUNT_ID)?.let { if (it is TextView) return it }
+        return null
     }
 
     /** 支持 1.2万 / 1.2亿 这类写法。解析不出来就原样返回，不乱改。 */
