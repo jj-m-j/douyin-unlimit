@@ -2,216 +2,71 @@
 
 一个 LSPosed 模块：**让抖音看起来没有被限制**。
 
-不修改服务端状态、不改账号权重，只拦截客户端本地的「限制类」提示，让它别在界面上跳出来。
+只改客户端本地的显示与交互，不碰服务端状态，也不修改账号本身。
 
-## 现状
+## 开关
 
-| 功能 | 状态 |
-|---|---|
-| 隐藏「点赞功能已封禁」这类吐司 | ✅ 已实现 |
-| 可自定义拦截关键词 | ✅ 已实现 |
-| 隐藏消息页「消息发送功能已被禁止使用」横幅 | ✅ 已实现 |
-| 隐藏聊天里的发送状态指示（红感叹号） | ✅ 已实现 |
-| 按关键词隐藏文字（服务端下发的封禁文案） | ✅ 已实现 |
-| 点赞保持已赞（不回滚） | ✅ 已实现 |
-| 按控件 id 隐藏界面元素 | ✅ 已实现 |
-| 其它限制类界面元素 | ⬜ 持续补充中 |
+| 开关 | 默认 | 作用 |
+|---|---|---|
+| 别提示我被限制了 | 开 | 吞掉弹窗吐司、消息页顶部横幅、聊天里的红叹号，以及服务端下发的限制文案 |
+| 连页面里写的限制说明也抹掉 | 关 | 按你自己填的关键词匹配文字。可能误伤正常内容，所以默认关、也不预置词表 |
+| 点赞被驳回也不回滚 | 开 | 点击和双击都按原生走，只在服务端驳回、抖音要撤销点赞的那一刻把它按住 |
+| 记录详细日志 | 关 | 关闭时一行日志都不写。排障时才打开 |
+
+## 它做不到什么
+
+- 服务端**确实**没接受这次点赞。下拉刷新或换一批视频之后，图标会按服务端数据恢复。
+- 抖音的 API 走 TTNet / Cronet 原生栈，Java 侧拦不到，所以「让服务端真的接受点赞」做不到。
+- 抖音更新后类名和方法名可能变化。模块尽量按「形状」而不是写死名字来定位
+  （用父类、字段类型、参数类型、无参 void 等方法特征），但仍然可能失效。
+  打开「记录详细日志」后，日志会写明每个目标是挂上了还是没找到。
 
 ## 原理
 
-抖音的提示吐司由 **DUX Toast** 体系渲染。逆向 `抖音 40.2.0` 后确认：
+一句话：**按现象分组，在最早的收口点拦掉**。
 
-```
-DuxToastV2.LIZJ(context, icon, iconTint, text, ..., style, ...)
-    ├─ style == DuxCustom -> new PopupToast(context, view)   // 自绘浮层
-    └─ 否则               -> new DuxSystemToast(context)     // 系统 Toast + setView
-```
+- **弹窗吐司** —— DUX Toast 体系（`DuxToastV2` / `DuxToast`）。它没有单一收口点，
+  所以按「参数里含 `CharSequence` 或 `String`」泛化扫描所有入口。必须在吐司被创建之前拦，
+  否则只藏文字会剩一个空药丸壳。
+- **消息页横幅** —— `ChatBanTipsLogic` 整个类只服务这条横幅，所以挂它所有的
+  「无参 void 动作方法」，不需要知道哪个方法负责显示。
+- **聊天发送状态 / 红叹号** —— 图标只有基类能显示，而且那个 `ImageView` 是聊天 cell
+  布局里就有的控件，**可能在 XML 里默认就是 VISIBLE**。所以不拦显示方法，
+  改成在组件构造时按类型把控件抓出来登记，之后任何 `setVisibility(VISIBLE)` 都改写成 `GONE`。
+  （按实例登记而不是按资源 id —— id 会被 aapt 重新分配，也可能被别的界面复用。）
+- **服务端下发的限制文案** —— 既不在 dex 字符串也不在资源表里，只能按运行时文字内容判定，
+  用一份内置的限制词表。命中后连同同一行的图标一起藏掉，避免留下孤零零的图标。
+- **点赞不回滚** —— 不拦点击、不拦请求。抖音的点赞是乐观更新，被驳回时会撤销。
+  撤销这件事在 `FeedDiggPresenter` 里只有一个出口（收 `Exception` 的失败处理方法），
+  跳过它即可，点击和原生特效完全不受影响。
 
-两条显示路径都从同一个构造方法分叉，所以模块把它当收口点：拿到 `CharSequence` 参数，
-命中关键词就直接返回 `null`，两种样式一起挡掉。旧版 `DuxToast` 结构相同，一并处理。
+更详细的逆向过程和踩过的坑见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
-弹窗的文案不是硬编码的（部分是服务端下发），所以只能按关键词匹配，不能写死某个字符串。
+## 环境
 
-另外模块还挂了 `android.widget.Toast#show` 作为兜底，覆盖不经过 DUX 的零散调用。
-
-`DuxToastV2` / `DuxToast` 的类名是稳定的，但方法名基本被混淆（`LIZJ`、`LJ`、`LJFF` …）。
-模块不写死方法名，而是遍历所有「接收 `CharSequence` 且返回 `void` 或引用类型」的方法挂 hook，
-这样抖音升级改名也照样能命中。
-
-## 消息页封禁横幅
-
-消息 tab 顶部那条「消息发送功能已被禁止使用」走的是另一条链路：
-
-```
-ChatBanTipsLogic (extends PriorityLogic)   // 显示/隐藏判定
-  LJLLLLLL()V
-    banInfo   = LX/0xtl.LIZ()                   // 本地缓存的封禁信息
-    punishIds = banInfo?.LJ() ?: emptyList()    // 封禁记录 id
-    shownIds  = IMKevaConfig 里已展示过的 id
-    if (punishIds.isEmpty()) { LJLLL(); return }                     // 隐藏
-    for (id in punishIds) if (id !in shownIds) { LJLLLL(); return }  // 显示
-    LJLLL()                                                          // 隐藏
-
-ChatBanTipsUI (extends RipsUI)             // 渲染，整个类只服务这一条横幅
-  a = DuxImageView ← 0x7f0a5e36  （铃铛图标）
-  b = DuxTextView  ← 0x7f0ac401  （标题文字）
-```
-
-这个 Logic 类只服务于这一条横幅，所以模块直接把 `LJLLLLLL()` 变成空操作，横幅永远不会被 show。
-另有「伪装无封禁记录」开关，兜底把 `ImBanInfo` 的封禁列表置空，让它自己走
-`no punish id → 隐藏` 分支。
-
-`0x7f0ac401` 这个 id 是在真机上用 Layout Inspect 抓出来核对过的。
-
-## 点赞保持已赞
-
-抖音的点赞是**乐观更新**：点下去 UI 立刻变成已赞、点赞数 +1，同时发请求。账号被限制时
-服务端驳回，客户端再把 UI 回滚成原样——就是「+1 又弹回去」。
-
-逆向 抖音 40.2.0 找到的回滚入口：
-
-```
-DiggViewModel.a : LX/13YF        // originState，原始点赞状态快照（GH1 从 Aweme.statistics 构造）
-DiggViewModel.b : Aweme          // 当前视频
-
-HH1(Activity, String enterMethod, Function2<Boolean, String, Unit> callback)
-    // 点赞入口。失败时回调 (false, msg)，接收方据此回滚成 originState
-    // 调用方：IconDiggPresenter 的点击监听、网络成功回调 LX/1J81.onSuccess
-
-MH1(...)  // 取消点赞入口
-```
-
-做法：**不碰状态机、不伪造网络**，只在 `HH1` 处把回调包一层，让接收方永远收到
-`success = true`。回滚分支因此不会执行，其余流程（埋点、动画、全局状态广播）全部照旧。
-
-这比直接改 UI 状态干净得多——不会出现「图标点赞了但数据没变」这种自相矛盾的状态。
-
-**只处理点赞，不处理取消点赞。** 取消点赞同样会被服务端驳回，而让它照常失败刚好就是
-我们要的结果：状态保持已赞。
-
-`HH1` 是 R8 改名后的名字，所以加了结构兜底：三个参数、最后一个类型是
-`kotlin.jvm.functions.Function2` 的只有点赞入口。
-
-## 按关键词隐藏文字
-
-抖音的封禁类文案**大多是服务端下发的**——既不在 dex 字符串里，也不在资源表里，
-而且同一类提示会散落在不同位置（会话里的系统消息、聊天里的提示行、列表里的横幅……）。
-按控件 id 一个个点名是打地鼠，而且一个资源 id 还可能被别的界面复用（踩过这个坑）。
-
-所以这一层改成按**运行时文字内容**判定，复用吐司那套关键词表：
-
-```
-TextView.setText(CharSequence)
-    └─ 命中关键词 -> 登记进 BlockedViews + 立即 GONE
-View.setVisibility(int)
-    └─ 控件在 BlockedViews 里 -> 任何 VISIBLE 请求都改写成 GONE
-```
-
-**为什么要分成两个 hook**：调用方经常在 `setText` **之后**再调一次
-`setVisibility(VISIBLE)` 把控件显示回来，单靠 `setText` 拦不住：
-
-```smali
-LJI():
-    textView.setText(...)            // setText 这里我们识别到并标记
-    textView.setVisibility(VISIBLE)  // 紧接着又被显示回来 ← 必须靠 setVisibility 这层压住
-```
-
-登记表用 `WeakHashMap` 存，控件被回收后自动出表，不会把 View 泄漏住。
-
-开销控制（`setText` 是很热的路径）：总开关走节流缓存；文本长度小于最短关键词直接跳过；
-**跳过 `EditText`**——否则用户自己在输入框打「封禁」两个字，输入框会自己消失。
-
-## 按控件 id 隐藏界面元素
-
-聊天里那些「违反社区规定」提示是**服务端下发**的（既不在 dex 字符串里，也不在资源表里），
-所以没法按文案匹配。这一类只能按控件 id 处理。
-
-模块拦的是 `View.setVisibility(int)`：命中黑名单的控件，把任何「显示」请求改写成 `GONE`。
-
-**为什么不在 inflate 时隐藏**：聊天列表是 RecyclerView，控件会被复用，每次 rebind 都会重新
-toggle 可见性。比如发送状态组件 `StatusIconWithText`：
-
-```smali
-LJI():
-    if (message.getMsgStatus() >= 2) return
-    textView.setText(resources.getString(0x7f11501a))
-    textView.setVisibility(VISIBLE)      // ← 每次 bind 都会重新显示
-```
-
-在 inflate/adapter 层隐藏会被下一次 rebind 覆盖，只有拦 `setVisibility` 才拦得住。
-
-代价是 `setVisibility` 属于热路径，所以做了两件事压低开销：配置摊平成 `IntArray`
-（判定只做一次线性扫描，无装箱无分配），未命中时直接 `proceed`。
-
-### ⚠️ 这个方案有硬伤，别乱加 id
-
-**一个资源 id 可能被多个不同界面复用。** 踩过一次：
-
-```
-0x7f0aa9d7 (DrawChildOptEllipsizeLayout)
-    ├─ 会话列表的标题   ← RipsSessionListAdapter 里 new 出来 setId(0x7f0aa9d7)
-    └─ (别处)
-```
-
-把它加进默认黑名单后，消息页的**会话名全部消失了**。所以往列表里加 id 之前，
-务必确认它在目标之外没有第二个使用点。
-
-也正因为这个原因，**聊天里那套发送状态改成了按类名 hook**（见下），
-不再依赖 id——id 列表只留给「找不到合适类名、只能点名」的零散场景。
-
-## 发送状态提示
-
-聊天里左侧的红感叹号和「由于违反社区规定，你的私信功能暂被封禁」属于**同一个组件**：
-
-```
-LX/179c （基类，发送状态指示）        a: Message   b: ImageView
-  LIZ()    -> setImageResource + ImageView.setVisibility(VISIBLE)   // 显示图标
-  LIZLLL() -> 隐藏
-  LJ(m)    -> 消息状态变化时调用 LIZ()（虚分派，会走到子类实现）
-
-StatusIconWithText extends LX/179c    f: DmtTextView
-  LIZ()  -> invoke-super LIZ()  然后设置并显示 f 的文字
-  LJI()  -> 设置并显示 f 的文字
-  LIZJ() -> 把图标和文字都藏起来，再调 LJI()
-```
-
-模块只拦截「显示」方法（`LIZ` / `LJI`），不动 `LIZLLL` / `LIZJ` 这些隐藏路径，
-避免和原有状态机打架。这样图标和文字一起消失，且不受 id 变化影响。
-
-⚠️ 注意：`msgStatus` 是**任何发送失败**都会命中（包括纯网络问题），
-所以这个开关是「无差别隐藏发送失败提示」。
-
-## 环境要求
-
-- Android 10+ (API 29+)
-- LSPosed / 支持 **libxposed API 102** 的框架
+- Android 10+（API 29+）
+- 支持 **libxposed API 102** 的框架（LSPosed 等）
 - 目标应用：抖音 `com.ss.android.ugc.aweme`
+
+## 安装
+
+1. 安装 APK
+2. 在 LSPosed 里启用模块，作用域勾选「抖音」
+3. 强制停止抖音后重新打开
+
+> CI 每次现场生成签名，**覆盖安装前要先卸载旧版**。
+> 要固定签名，在仓库 Secrets 里配置 `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`。
 
 ## 构建
 
-本地构建需要 JDK 21 + Android SDK (platform 36)。
+需要 JDK 21 + Android SDK（platform **37.2**）。
 
 ```bash
 ./gradlew :app:assembleRelease
 ```
 
-推送到 `main` 或打 `v*` tag 会自动触发 GitHub Actions 构建，产物在 Artifacts / Releases 里。
-
-签名：默认在 CI 里现场生成 keystore（**每次构建签名都不同，覆盖安装需要先卸载**）。
-要固定签名，在仓库 Secrets 里配置 `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`。
-
-## 使用
-
-1. 安装 APK
-2. 在 LSPosed 里启用模块，作用域勾选「抖音」
-3. 强制停止抖音后重新打开
-4. 打开模块 App 调整关键词（改完即时生效，不用重启抖音）
-
-## 界面
-
-设置界面用 [Miuix](https://github.com/compose-miuix-ui/miuix) 构建
-（`top.yukonga.miuix.kmp:miuix-ui`，Compose Multiplatform）。
+推送到 `main` 会自动触发 GitHub Actions 构建，产物在 Artifacts 里。
 
 ## 许可
 
-Apache-2.0
+[MIT](LICENSE)

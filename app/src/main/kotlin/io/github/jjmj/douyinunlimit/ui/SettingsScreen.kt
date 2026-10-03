@@ -97,7 +97,7 @@ fun SettingsScreen() {
                     BasicComponent(
                         title = if (connected) "已连接 LSPosed" else "未连接 LSPosed",
                         summary = if (connected) {
-                            "改动即时生效，不用重启抖音"
+                            ""
                         } else {
                             "请在 LSPosed 里启用本模块，再重启本应用"
                         },
