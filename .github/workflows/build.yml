@@ -82,7 +82,6 @@ jobs:
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n1)
           echo "apksigner=$APKSIGNER"
           "$APKSIGNER" verify --print-certs "$APK"
-          echo "=== APK=$APK" >> "$GITHUB_ENV"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
