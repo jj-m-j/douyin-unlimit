@@ -63,6 +63,9 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
     /** 隐藏消息 tab 顶部「消息发送功能已被禁止使用」横幅。 */
     fun hideImBanTips(): Boolean = flag(Prefs.KEY_HIDE_IM_BAN_TIPS, true)
 
+    /** 隐藏聊天里的发送状态指示（红感叹号 + 「由于违反社区规定…」那段文字）。 */
+    fun hideSendStatus(): Boolean = flag(Prefs.KEY_HIDE_SEND_STATUS, true)
+
     /** 「按 id 隐藏控件」总开关，走节流缓存。 */
     fun hideViewsEnabled(): Boolean {
         syncIfStale()

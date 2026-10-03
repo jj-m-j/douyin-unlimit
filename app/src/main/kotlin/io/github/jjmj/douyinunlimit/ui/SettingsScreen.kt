@@ -24,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.3.0"
+private const val VERSION = "1.4.0"
 
 /**
  * Miuix 的排版约定（来自官方 example）：
@@ -87,6 +87,12 @@ fun SettingsScreen() {
                         onCheckedChange = { SettingsBridge.setHideImBanTips(it) },
                         title = "隐藏消息页封禁横幅",
                         summary = "去掉「消息发送功能已被禁止使用」那条提示",
+                    )
+                    SwitchPreference(
+                        checked = settings.hideSendStatus,
+                        onCheckedChange = { SettingsBridge.setHideSendStatus(it) },
+                        title = "隐藏发送状态提示",
+                        summary = "聊天里的红感叹号和「由于违反社区规定…」那段文字",
                     )
                     SwitchPreference(
                         checked = settings.hideViews,

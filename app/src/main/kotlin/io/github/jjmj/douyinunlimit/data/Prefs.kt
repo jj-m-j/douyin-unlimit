@@ -13,6 +13,7 @@ object Prefs {
 
     // 界面元素
     const val KEY_HIDE_IM_BAN_TIPS = "hide_im_ban_tips"
+    const val KEY_HIDE_SEND_STATUS = "hide_send_status"
     const val KEY_HIDE_VIEWS = "hide_views"
     const val KEY_HIDE_VIEW_IDS = "hide_view_ids"
 
@@ -47,13 +48,18 @@ object Keywords {
  * 所以做成可编辑列表。输入接受 `0x7f0ab151`、`7f0ab151`（按十六进制解析）或十进制。
  */
 object ViewIds {
-    /** 0x7f0ab151: 聊天里的发送状态图标（红感叹号，ImImageView） */
+    /** 0x7f0ab151: 聊天里的发送状态图标（红感叹号，ImImageView）。已验证有效。 */
     const val SEND_STATUS_ICON = 0x7f0ab151
 
-    /** 0x7f0aa9d7: 状态文字容器（DrawChildOptEllipsizeLayout，「由于违反社区规定…」那行） */
-    const val SEND_STATUS_TEXT = 0x7f0aa9d7
-
-    val DEFAULT: List<Int> = listOf(SEND_STATUS_ICON, SEND_STATUS_TEXT)
+    /**
+     * 默认只放已经验证过、且确认不会误伤别的界面的 id。
+     *
+     * 注意：一个资源 id 可能被**多个不同界面复用**。例如 0x7f0aa9d7
+     * （DrawChildOptEllipsizeLayout）既是会话列表的标题，也被别处用到——
+     * 曾经把它加进默认列表，结果把消息页的会话名一起隐藏了。
+     * 所以往这里加 id 之前，务必确认它在 target 之外没有第二个使用点。
+     */
+    val DEFAULT: List<Int> = listOf(SEND_STATUS_ICON)
 
     private const val SEPARATOR = "\n"
 
