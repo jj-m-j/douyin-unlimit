@@ -57,14 +57,14 @@ object ViewIds {
     const val SEND_STATUS_ICON = 0x7f0ab151
 
     /**
-     * 默认只放已经验证过、且确认不会误伤别的界面的 id。
+     * 默认留空。
      *
-     * 注意：一个资源 id 可能被**多个不同界面复用**。例如 0x7f0aa9d7
-     * （DrawChildOptEllipsizeLayout）既是会话列表的标题，也被别处用到——
-     * 曾经把它加进默认列表，结果把消息页的会话名一起隐藏了。
-     * 所以往这里加 id 之前，务必确认它在 target 之外没有第二个使用点。
+     * 原来这里放着聊天的发送状态图标 0x7f0ab151，但那是**和「隐藏聊天里的封禁提示」
+     * 重复**的——两者指向同一个控件（StatusIconWithText 的图标）。
+     * 按类名 hook（SendStatusGuard）不依赖资源 id、抖音升级也不受影响，所以留下它，
+     * 这里清空。这个列表只作为「找不到合适类名、只能点名」时的兜底工具。
      */
-    val DEFAULT: List<Int> = listOf(SEND_STATUS_ICON)
+    val DEFAULT: List<Int> = emptyList()
 
     private const val SEPARATOR = "\n"
 

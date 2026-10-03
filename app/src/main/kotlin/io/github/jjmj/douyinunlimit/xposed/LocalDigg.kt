@@ -100,19 +100,21 @@ internal object LocalDigg {
 
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
+                        // 吞掉双击的第二次按下之后，后续抬手也一并吞掉，
+                        // 否则 super 会把它当普通点击 → 触发抖音的点赞监听
+                        if (swallowUntilUp) return@intercept true
+
                         val now = System.currentTimeMillis()
                         val gap = now - lastVideoDownAt
                         lastVideoDownAt = now
-                        // 用「两次按下」的间隔判定——这正是 Android GestureDetector 的做法，
-                        // 比用抬手更可靠（抬手可能被父容器截走）
-                        pendingDoubleTap = gap < DOUBLE_TAP_WINDOW_MS
-                        Diag.debug("digg", "视频区域 ACTION_DOWN，距上次 ${gap}ms，疑似双击=$pendingDoubleTap")
-                        chain.proceed()
-                    }
 
-                    MotionEvent.ACTION_UP -> {
-                        if (!pendingDoubleTap) return@intercept chain.proceed()
-                        pendingDoubleTap = false
+                        if (gap >= DOUBLE_TAP_WINDOW_MS) return@intercept chain.proceed()
+
+                        // 双击的第二次按下——【立刻】本地化，不能等抬手：
+                        // 实测父容器会在第二次按下之后劫走触摸序列，
+                        // 我们的 onTouchEvent 再也收不到 ACTION_UP（只会收到 CANCEL）。
+                        swallowUntilUp = true
+                        Diag.debug("digg", "识别到双击（按下间隔 ${gap}ms）")
 
                         val button = findLikeButtonInSameItem(host)
                         if (button != null) {
@@ -123,8 +125,21 @@ internal object LocalDigg {
                         } else {
                             Diag.log("digg", "双击识别到了，但没找到同一项里的点赞按钮")
                         }
-                        // 吞掉这次抬手，抖音的手势检测看不到它，双击点赞请求不会发出
+                        // 不调 super，抖音的手势检测收不到这次按下
                         true
+                    }
+
+                    MotionEvent.ACTION_UP -> {
+                        if (swallowUntilUp) {
+                            swallowUntilUp = false
+                            return@intercept true
+                        }
+                        chain.proceed()
+                    }
+
+                    MotionEvent.ACTION_CANCEL -> {
+                        swallowUntilUp = false
+                        chain.proceed()
                     }
 
                     else -> chain.proceed()
@@ -138,7 +153,8 @@ internal object LocalDigg {
 
     private var lastVideoDownAt = 0L
 
-    private var pendingDoubleTap = false
+    /** 吞掉双击后续事件，避免 super 把它当普通点击。 */
+    private var swallowUntilUp = false
 
     private const val DOUBLE_TAP_WINDOW_MS = 450L
 
