@@ -34,7 +34,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.14.0"
+private const val VERSION = "1.0"
 
 private const val REPO_URL = "https://github.com/jj-m-j/douyin-unlimit"
 private const val REPO_LABEL = "github.com/jj-m-j/douyin-unlimit"

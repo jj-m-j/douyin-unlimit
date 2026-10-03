@@ -71,6 +71,17 @@ jobs:
       - name: Build release
         run: ./gradlew :app:assembleRelease --stacktrace
 
+      # 让产物（以及 Release 附件）带上版本名，而不是千篇一律的 app-release.apk。
+      # tag 构建时 GITHUB_REF_NAME 是 tag 名（v1.0），分支构建时是分支名。
+      - name: Rename APK
+        run: |
+          cd app/build/outputs/apk/release
+          for f in *.apk; do
+            [ "$f" = "douyin-unlimit-${GITHUB_REF_NAME}.apk" ] && continue
+            mv "$f" "douyin-unlimit-${GITHUB_REF_NAME}.apk"
+          done
+          ls -l
+
       - name: Verify APK
         run: |
           set -e
@@ -99,3 +110,22 @@ jobs:
         with:
           files: app/build/outputs/apk/release/*.apk
           generate_release_notes: true
+          body: |
+            LSPosed 模块：**让抖音看起来没有被限制**。
+            只改客户端本地的显示与交互，不碰服务端状态，也不修改账号本身。
+
+            ### 四个开关
+            - **别提示我被限制了**（默认开）—— 干掉弹窗吐司、消息页顶部横幅、聊天里的红叹号，以及服务端下发的限制文案
+            - **关键词拦截**（默认关）—— 拦截含有关键词的吐司或者文案
+            - **假装点赞成功了**（默认开）—— 点击和双击都按原生走，只在服务端驳回、抖音要撤销点赞的那一刻把它按住
+            - **记录详细日志**（默认关）—— 关闭时一行日志都不写
+
+            ### 安装
+            1. **先卸载旧版**（CI 每次现场生成签名，覆盖安装会失败）
+            2. 安装 APK，在 LSPosed 里启用模块，作用域勾选「抖音」
+            3. 强制停止抖音后重新打开
+
+            ### 说明
+            目标是抖音 `40.2.0`。定位尽量按「形状」而不是写死名字，其它版本大概率也能用；
+            失效时打开「记录详细日志」，日志会写明哪个目标没找到。
+            点赞是本地呈现——服务端其实没有接受，下拉刷新后会恢复。
