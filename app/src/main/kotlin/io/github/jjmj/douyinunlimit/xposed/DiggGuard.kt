@@ -178,7 +178,7 @@ internal object DiggGuard {
                 // 不允许「点过赞 -> 未赞」的降级
                 if (rules.stickyDigg() && aid != null && !digged && likedAids.contains(aid)) {
                     Diag.log("global", "拦截降级：aid=$aid 保持已赞")
-                    return@intercept chain.proceed(arrayOf(aid, true))
+                    return@intercept chain.proceed(arrayOf<Any?>(aid, true))
                 }
 
                 chain.proceed()
