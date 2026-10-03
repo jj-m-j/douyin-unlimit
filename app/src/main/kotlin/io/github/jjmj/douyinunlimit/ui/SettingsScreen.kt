@@ -24,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.4.0"
+private const val VERSION = "1.5.0"
 
 /**
  * Miuix 的排版约定（来自官方 example）：
@@ -92,7 +92,13 @@ fun SettingsScreen() {
                         checked = settings.hideSendStatus,
                         onCheckedChange = { SettingsBridge.setHideSendStatus(it) },
                         title = "隐藏发送状态提示",
-                        summary = "聊天里的红感叹号和「由于违反社区规定…」那段文字",
+                        summary = "聊天里的红感叹号",
+                    )
+                    SwitchPreference(
+                        checked = settings.hideText,
+                        onCheckedChange = { SettingsBridge.setHideText(it) },
+                        title = "按关键词隐藏文字",
+                        summary = "含关键词的文字控件直接隐藏，用下面那份关键词表",
                     )
                     SwitchPreference(
                         checked = settings.hideViews,

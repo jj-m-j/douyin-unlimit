@@ -48,6 +48,7 @@ object SettingsBridge {
             toastKeywords = Keywords.parse(p.getString(Prefs.KEY_TOAST_KEYWORDS, null)),
             hideImBanTips = p.getBoolean(Prefs.KEY_HIDE_IM_BAN_TIPS, true),
             hideSendStatus = p.getBoolean(Prefs.KEY_HIDE_SEND_STATUS, true),
+            hideText = p.getBoolean(Prefs.KEY_HIDE_TEXT, true),
             hideViews = p.getBoolean(Prefs.KEY_HIDE_VIEWS, true),
             hideViewIds = ViewIds.parse(p.getString(Prefs.KEY_HIDE_VIEW_IDS, null)),
         )
@@ -73,6 +74,11 @@ object SettingsBridge {
     fun setHideSendStatus(value: Boolean) {
         settings = settings.copy(hideSendStatus = value)
         putBoolean(Prefs.KEY_HIDE_SEND_STATUS, value)
+    }
+
+    fun setHideText(value: Boolean) {
+        settings = settings.copy(hideText = value)
+        putBoolean(Prefs.KEY_HIDE_TEXT, value)
     }
 
     fun setHideViews(value: Boolean) {

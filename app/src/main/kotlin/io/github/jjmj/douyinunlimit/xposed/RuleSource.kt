@@ -66,6 +66,17 @@ internal class RuleSource(private val prefs: SharedPreferences?) {
     /** 隐藏聊天里的发送状态指示（红感叹号 + 「由于违反社区规定…」那段文字）。 */
     fun hideSendStatus(): Boolean = flag(Prefs.KEY_HIDE_SEND_STATUS, true)
 
+    /** 按关键词隐藏文字控件。 */
+    fun shouldHideText(text: CharSequence): Boolean {
+        if (text.length < 2) return false
+        if (!flag(Prefs.KEY_HIDE_TEXT, true)) return false
+        val list = keywords()
+        for (keyword in list) {
+            if (keyword.isNotEmpty() && text.contains(keyword)) return true
+        }
+        return false
+    }
+
     /** 「按 id 隐藏控件」总开关，走节流缓存。 */
     fun hideViewsEnabled(): Boolean {
         syncIfStale()

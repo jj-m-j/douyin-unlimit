@@ -62,7 +62,10 @@ internal object ViewGuard {
                 if (!rules.hideViewsEnabled()) return@intercept chain.proceed()
 
                 val view = chain.thisObject as? View
-                if (view == null || !rules.shouldHideView(view.id)) {
+                if (view == null) return@intercept chain.proceed()
+
+                // 命中 id 黑名单，或已被 TextGuard 标记（文字里含关键词）
+                if (!BlockedViews.isBlocked(view) && !rules.shouldHideView(view.id)) {
                     return@intercept chain.proceed()
                 }
 

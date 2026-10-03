@@ -29,6 +29,7 @@ class HookEntry : XposedModule() {
         install("toast") { ToastGuard.install(this, param.classLoader, rules) }
         install("im ban tips") { ImBanGuard.install(this, param.classLoader, rules) }
         install("send status") { SendStatusGuard.install(this, param.classLoader, rules) }
+        install("text") { TextGuard.install(this, rules) }
         install("view") { ViewGuard.install(this, rules) }
     }
 
