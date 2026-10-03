@@ -24,7 +24,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
-private const val VERSION = "1.12.0"
+private const val VERSION = "1.13.0"
 
 /** 卡片统一的内缩与块间距，Miuix 规范是横向 12dp。 */
 private fun Modifier.cardInset() = this
