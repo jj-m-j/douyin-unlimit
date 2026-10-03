@@ -144,7 +144,7 @@ internal object LocalDigg {
     }
 
     /** 只打印出「哪个参数是点赞态」就够定位，不做完整序列化。 */
-    private fun describe(args: Array<Any?>): String {
+    private fun describe(args: List<Any?>): String {
         val out = StringBuilder()
         for (arg in args) {
             if (out.isNotEmpty()) out.append(", ")

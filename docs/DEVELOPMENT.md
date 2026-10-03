@@ -15,6 +15,32 @@
 | 模块框架 | libxposed API **102**（`io.github.libxposed:api` / `:service`） |
 | UI | Miuix `top.yukonga.miuix.kmp:miuix-ui` 0.9.4（Compose Multiplatform） |
 | 构建 | AGP 9.4.1 + Kotlin 2.4.20 + Gradle 9.8.0，compileSdk **37.2** |
+| 当前版本 | **1.14.0**（versionCode 23） |
+| 产物 | ~1.13 MB（单 dex） |
+
+**产品目标**：让用户觉得「自己的抖音没有被限制」——隐藏各类封禁提示、让点赞看起来正常。
+
+**设计红线**：只改客户端本地的**显示与交互**，不修改任何服务端状态，不伪造网络请求。
+
+### 开关（v1.14：七个 -> 四个）
+
+| 开关 | 默认 | 实际覆盖 |
+|---|---|---|
+| 别提示我被限制了 | 开 | 弹窗吐司 / 消息页横幅 / 聊天红叹号 |
+| 连页面里写的限制说明也抹掉 | 开 | 按关键词匹配运行时文字（有误伤风险，所以单独一个开关） |
+| 点赞被驳回也不回滚 | 开 | `FeedDiggPresenter.LJJJJZ(Exception)`，见 §7.5 |
+| 记录详细日志 | 关 | 点击探针 + 点赞链路每一步 |
+
+合并的理由见 §6 开头；删掉的东西见 §6.6。
+
+| 项 | 值 |
+|---|---|
+| 仓库 | `jj-m-j/douyin-unlimit` |
+| 包名 / applicationId | `io.github.jjmj.douyinunlimit` |
+| 目标应用 | 抖音 `com.ss.android.ugc.aweme` 40.2.0（versionCode 400201，targetSdk 34） |
+| 模块框架 | libxposed API **102**（`io.github.libxposed:api` / `:service`） |
+| UI | Miuix `top.yukonga.miuix.kmp:miuix-ui` 0.9.4（Compose Multiplatform） |
+| 构建 | AGP 9.4.1 + Kotlin 2.4.20 + Gradle 9.8.0，compileSdk **37.2** |
 | 产物 | ~1.13 MB（单 dex） |
 
 **产品目标**：让用户觉得「自己的抖音没有被限制」——隐藏各类封禁提示、让点赞看起来正常。
@@ -237,14 +263,21 @@ implementation(libs.libxposed.service) // 必须打进 APK
 
 ### 5.3 按「结构特征」找方法，不按名字
 
-抖音的类名通常稳定（`DuxToastV2`、`ChatBanTipsLogic`、`VideoDiggView`），但**方法名大量被 R8 混淆**（`LIZJ` / `LJ` / `LJFF`）。所以：
+抖音的类名通常稳定（`DuxToastV2`、`ChatBanTipsLogic`、`VideoDiggView`），
+但**方法名大量被混淆**（`LIZJ` / `LJ` / `LJFF`）。所以：
 
-- 吐司：遍历所有「收 `CharSequence` 且返回 `void` 或引用类型」的方法挂 hook
-- 点赞入口：找「三个参数、最后一个类型是 `kotlin.jvm.functions.Function2`」的方法
-- 抖音动画入口：找「参数是 `(DiggAnimationView, boolean)` 且返回 `void`」的方法
-- 计数器图标：从 `VideoDiggView` 的字段里找「类型实现了 `View.OnClickListener`」的那个
+- 吐司：遍历所有「收 `CharSequence` / `String` 且返回 `void` 或引用类型」的方法挂 hook
+- 消息页横幅 / 聊天发送状态：先按记下来的方法名找，找不到就退化成
+  「该类所有 public 无参 void 方法」——这两个类各自只服务一个组件，全屏蔽也没副作用
+- 点赞回滚：按「名字 + 单个 `Exception` 参数」定位（回滚方法必然收一个异常）
+- 点赞诊断钩子：`LJJJJL`（1 参，点击入口）/ `LJJLIIIJJI`（3 参，发请求）
 
-**这样即使抖音改名也照样工作。**
+这样即使抖音改名也照样工作。
+
+> **这个方法有个隐藏前提：你对链路已经有正确的假设。**
+> v1.13 用「参数是 `Function2`」找到的点赞入口是对的，可把回滚定位在
+> `onEventDiggUpdate` 就错了——结构特征只能帮你在候选里挑，挑错了照样一次都不命中。
+> 所以**每个结构特征 hook 都必须带命中日志**（见 §7.6 的三分法）。
 
 ### 5.4 真机证据 > 静态推测
 
@@ -271,42 +304,84 @@ invoke-virtual {v12, v0}, Landroid/view/View;->setId(I)V
 
 ## 6. 已实现功能的技术细节
 
-### 6.1 屏蔽限制类吐司 ✅
+### 6.0 为什么重组了开关
 
-**链路**（`com.bytedance.dux.toast` = DUX Toast 体系）：
+v1.13 有七个开关，其中四个其实在描述**同一件事**——「抖音在告诉我我被限制了」，
+只是实现分别落在四层：
+
+| 现象 | 实现层 | 误伤风险 |
+|---|---|---|
+| 弹出来的吐司 | DUX Toast 体系 + 系统 Toast | 无（按类名 + 关键词） |
+| 消息页顶部横幅 | `ChatBanTipsLogic` | 无（整个类只服务这条横幅） |
+| 聊天里的红叹号 | `StatusIconWithText` | 无（整个类只服务这个组件） |
+| 散落的限制文案 | `TextView.setText` 文字匹配 | **有**（见下） |
+
+用户想消掉的是**现象**，不是实现。前三者按固定类精准拦截、零误伤，
+合成一个开关「别提示我被限制了」；第四个靠运行时文字匹配、可能误伤正常内容，
+单独保留，让用户能只关掉它。
+
+拆成四个开关的代价是：用户被迫去做一个他并不关心的技术区分。
+合并之后行为完全一样（四个旧开关默认都是开的），但界面少了一半杂音。
+
+---
+
+### 6.1 弹窗吐司
+
+DUX Toast 体系（`com.bytedance.dux.toast`）。**它不是单一收口点** ——
+v1.13 的文档说「两条显示分支从 `LIZJ` 一个方法分叉」，这是错的。
+真实情况是：
 
 ```
-DuxToastV2.LIZJ(context, icon, iconTint, text, ..., style, ...)   ← 唯一收口点
-    ├─ style == DuxCustom → new PopupToast(context, view)   // 自绘浮层（截图里屏幕中上部那种）
-    └─ 否则               → new DuxSystemToast(context)     // 系统 Toast + setView
+系统吐司   DuxToastV2.LIZJ(DuxToastV2, Context, Drawable, CharSequence, ...,
+                          DuxToastLocation, ...)          <- static；第 3 位才是文案
+便捷入口   DuxToastV2.LJFF(Context, CharSequence)
+           DuxToastV2.makeShowSystemToast$default(..., CharSequence, ...)
+自绘浮层   DuxToastV2.LIZLLL(... DuxToastContent ...)     <- makeShowCustomToast，拿不到文案
+           DuxToastV2.LJ(Context, boolean, String, Function1)     <- 这里是 String
+           DuxToastV2.customToastShow$default(Context, String, ...)
 ```
 
-两条显示分支都从同一个方法分叉，所以拿它的 `CharSequence` 参数判断，命中即 `return null`，两种样式一起挡掉。旧版 `DuxToast` 结构相同，一并处理。
+**做法**：不写死方法名。遍历 `DuxToastV2` / `DuxToast` /
+`DuxToastContent$DuxToastTextContent` 里「参数含 `CharSequence` 或 `String`」且
+「返回 `void` 或引用类型」的方法，命中关键词就跳过。抖音改方法名也照样工作。
 
-**控件 id（真机核对过）**：布局 `0x7f0d0d38`，容器 LinearLayout `0x7f0abf56`，文本 `0x7f0a8db2`，背景 `GradientDrawable #E6393B44`。
+（`makeShowCustomToast$default` 的文案包在 `DuxToastContent` 抽象类里，
+直接拿不到——这一路靠 §6.4 的文字匹配兜住。）
 
-**另一个兜底**：`android.widget.Toast#show()`，覆盖不经过 DUX 的零散调用。
+**为什么必须在吐司被创建之前拦掉**：自绘吐司是一个 `PopupToast` 浮层。
+把里面的 TextView 藏掉只会剩下一个**空药丸壳**，看起来更奇怪。
+所以「按关键词隐藏文字」（§6.4）**不能**取代这一层。
 
-### 6.2 消息页封禁横幅 ✅
+**返回值的坑**：部分吐司方法返回 `IDuxToastOperation`，调用方之后会拿它 `dismiss()`，
+直接返回 `null` 会让调用方 NPE。所以返回类型是**接口**时，回一个
+「什么都不做」的动态代理（`java.lang.reflect.Proxy`，按返回类型缓存，别每次新建）。
+
+**兜底**：`android.widget.Toast#show()`，覆盖不经过 DUX 的零散调用。
+
+### 6.2 消息页封禁横幅
+
+**两个入口都要拦**，只拦判定会被绕过：
+
+| 方法 | 作用 |
+|---|---|
+| `ChatBanTipsLogic.LJLLLLLL()V` | 显示/隐藏**判定** |
+| `ChatBanTipsLogic.LJJJLZIJ()V` | **真正把横幅挂上去**（内含 `im_message_block_notice_show` 埋点、`TOP_BAR`） |
+
+判定逻辑（`LJLLLLLL`）：
 
 ```
-ChatBanTipsLogic (extends PriorityLogic)      // 整个类只服务这一条横幅
-  LJLLLLLL()V
-    banInfo   = LX/0xtl.LIZ()                    // 从 Keva "imBanInfoSp" 读本地缓存
-    punishIds = banInfo?.LJ() ?: emptyList()
-    shownIds  = IMKevaConfig 里已展示过的 id
-    if (punishIds.isEmpty()) { LJLLL(); return }                     // 隐藏
-    for (id in punishIds) if (id !in shownIds) { LJLLLL(); return }  // 显示
-    LJLLL()                                                          // 隐藏
-
-ChatBanTipsUI (extends RipsUI)                // 渲染
-  a = DuxImageView (0x7f0a5e36, 铃铛)
-  b = DuxTextView  (0x7f0ac401, 文字)          ← 真机 Layout Inspect 核对过
+banInfo   = LX/0xtl.LIZ()                    // 从 Keva "imBanInfoSp" 读本地缓存
+punishIds = banInfo?.LJ() ?: emptyList()
+shownIds  = IMKevaConfig 里已展示过的 id
+if (punishIds.isEmpty()) { LJLLL(); return }                     // 隐藏
+for (id in punishIds) if (id !in shownIds) { LJLLLL(); return }  // 显示
+LJLLL()                                                          // 隐藏
 ```
 
-让 `LJLLLLLL()` 空操作即可。找不到该名字时退化为「屏蔽该类所有 public 无参 void 方法」——这个类只干一件事，全屏蔽也没副作用。
+`ChatBanTipsUI`（渲染）：`a` = DuxImageView（0x7f0a5e36，铃铛），
+`b` = DuxTextView（0x7f0ac401，文字）—— 真机 Layout Inspect 核对过。
 
-### 6.3 聊天里的红叹号 / 发送状态提示 ✅
+### 6.3 聊天里的红叹号 / 发送状态
 
 ```
 LX/179c （基类，发送状态指示）        a: Message   b: ImageView
@@ -315,46 +390,55 @@ LX/179c （基类，发送状态指示）        a: Message   b: ImageView
   LJ(m)    -> 消息状态变化时调 LIZ()（虚分派，会走到子类实现）
 
 StatusIconWithText extends LX/179c    f: DmtTextView
-  LIZ()  -> invoke-super LIZ()  然后设置并显示 f 的文字
-  LJI()  -> 设置并显示 f 的文字
+  LIZ()  -> invoke-super LIZ()  然后设置并显示 f 的文字      <- 拦
+  LJI()  -> 设置并显示 f 的文字                              <- 拦
   LIZJ() -> 把图标和文字都藏起来，再调 LJI()
+  LIZLLL() -> 隐藏
 ```
 
-**只拦「显示」方法（`LIZ` / `LJI`），不动 `LIZLLL` / `LIZJ` 这些隐藏路径**，避免和原有状态机打架。
+只拦「显示」（`LIZ` / `LJI`），不动 `LIZJ` / `LIZLLL` 这些隐藏路径，
+避免和它自己的状态机打架。
 
-> **去重**：这个功能和「按 id 隐藏控件」默认列表里的 `0x7f0ab151` 指向**同一个控件**，属于重复。保留按类名这套（不依赖资源 id），id 列表默认清空，降级为手动兜底工具。
+> **固有副作用**：消息真的因为网络原因发送失败时，用户也看不到红叹号了，
+> 也就不知道要重发。这是这个功能的代价，不是 bug。
 
-### 6.4 按关键词隐藏文字 ✅（通用解）
+### 6.4 按关键词隐藏文字（通用兜底层）
 
-**为什么需要它**：服务端下发的封禁文案既不在 dex 也不在资源表，而且同一类提示散落在多处（会话里的系统消息、聊天里的提示行、列表里的横幅……），按控件 id 点名是打地鼠。
+**为什么需要它**：服务端下发的封禁文案既不在 dex 也不在资源表，而且同一类提示
+散落在多处（会话里的系统消息、聊天里的提示行、列表里的横幅……），按控件 id 点名是打地鼠。
 
 **做法（两层，缺一不可）**：
 
 ```
 TextView.setText(CharSequence)
-    └─ 命中关键词 → 登记进 BlockedViews(WeakHashMap) + 立即 GONE
+    └─ 命中关键词 -> 登记进 blocked(WeakHashMap) + 立即 GONE
 
 View.setVisibility(int)
-    └─ 控件在 BlockedViews 里 → 任何 VISIBLE 请求都改写成 GONE
+    └─ 控件在 blocked 里 -> 任何 VISIBLE 请求都改写成 GONE
 ```
 
-**为什么必须两层**：调用方经常在 `setText` **之后**再补一次 `setVisibility(VISIBLE)` 把它显示回来：
+**为什么必须两层**：调用方经常在 `setText` **之后**再补一次 `setVisibility(VISIBLE)`
+把它显示回来：
 
 ```smali
 LJI():
-    textView.setText(...)            // setText 这里我们识别到并标记
-    textView.setVisibility(VISIBLE)  // 紧接着又被显示回来 ← 必须靠第二层压住
+    textView.setText(...)            // 这里识别到并标记
+    textView.setVisibility(VISIBLE)  // 紧接着又被显示回来 <- 必须靠第二层压住
 ```
 
 **必须跳过 `EditText`** —— 否则用户自己在输入框打「封禁」两个字，输入框会当场消失。
 
-### 6.5 按控件 id 隐藏（手动兜底工具）
+### 6.5 点赞不回滚
 
-- 拦 `View.setVisibility(int)`：命中黑名单的 id，把任何「显示」请求改写成 `GONE`
-- 也拦 `ViewGroup.addView` / `LayoutInflater.inflate`：很多控件是 XML 声明、默认 VISIBLE、代码从不调 `setVisibility` 的，只拦 setVisibility 完全抓不到
-- **默认列表为空**，只作为「找不到合适类名、只能点名」时的兜底（见图 §5.5 的复用风险）
+完整分析见 §7.5。一句话：拦 `FeedDiggPresenter.LJJJJZ(Exception)`，
+它是「失败后撤销乐观点赞」在整个链路里唯一的出口。
 
----
+### 6.6 曾经存在、已删除
+
+| 功能 | 为什么删 |
+|---|---|
+| 按控件 id 隐藏 | `ViewIds.DEFAULT` 本来就是**空列表**——默认状态下它什么都不做，只是一个「得先会用 Layout Inspect 才用得起来」的占位开关。它能覆盖的场景 §6.4 已经覆盖，而且不依赖打包时分配的资源 id（抖音升级就会变）。相关风险见 §5.5 |
+| 拦截点赞 HTTP 请求（`NetGuard`） | 方案已证伪（§7.1）：点赞走 TTNet/Cronet 原生栈，Java 侧拦不到。留着是 185 行死代码 + 每个进程两个永不命中的 hook |
 
 ## 7. 点赞：最长的一条路（完整弯路记录）
 
@@ -437,26 +521,73 @@ LJIIIZ(View view, boolean onlyScale, LX/1J8B diggUIConfig)V
 
 **只要在触摸层拦，就必然丢掉原生手感与特效。** 换任何拦截写法都躲不掉。
 
-### 7.5 最终方向：不拦点击，只拦「回滚」
+### 7.5 第五步（最终方案）：不拦点击，只拦「失败后的那一次回滚」✅
 
-让抖音完整走完它自己的一套（乐观 +1、原生动画、原生双击特效、发请求），只在最后那一步拦下来：
+让抖音完整走完它自己的一套（乐观 +1、原生动画、原生双击特效、发请求都在），
+只在最后那一步按住它。拦截点用 dex 静态分析定位、并逐个 xref 验证过：
 
 ```
 用户点赞
-  → 抖音乐观 +1 + 播原生特效 + 发请求
+  → FeedDiggPresenter.LJJJJL(aweme)        handle_digg_click（点击入口）
+  → LJJLIIJ(aweme, true, ...)              乐观设为已赞
+        ↑ 这是**唯一**写 Aweme.diggSelected 的地方
+  → aweme.diggSelected = 1
+  → LJJLIIIJJI(aweme, "click_like")        发请求
   → 服务端驳回
-  → GlobalDiggStateManager 广播事件 (LX/0tvw)
-  → VideoDiggView.onEventDiggUpdate(...)   ← 【驳回后重刷 UI 的入口】
+  → wq(Exception)                          失败回调（feed_digg_error_monitor 埋点）
+  → LJJJJZ(Exception)                      ★ 回滚：取反写回 diggSelected、弹失败提示、
+                                             通知 LX/1J7T 监听者、post LX/1A7e 到 LiveData
   → 图标与数字被刷回未点赞
 ```
 
-`onEventDiggUpdate` 是 **EventBus 订阅方法，方法名没有被混淆**，比较稳定。跳过它，驳回后的重渲染就不发生。
+**`LJJJJZ` 只有两个调用者**（用 `mt_apk_dex_xref` 逐个确认）：
 
-**这个方案同时解决了暂停和特效两个问题**，因为点击完全没有被碰。
+| 调用者 | 说明 |
+|---|---|
+| `FeedDiggPresenter.wq(Exception)` | 请求失败回调 |
+| `LX/19zz.run()` | `wq` 那侧构造的转发 Runnable，内容就是调 `LJJJJZ` |
 
-**待验证的风险**：如果回滚不是只走这一条路（比如某处直接改模型再刷新），那就拦不住。届时日志会显示钩子挂上了、但数字仍然回滚。
+也就是说「失败后撤销乐观更新」这件事**只有这一个出口**。跳过它，UI 就停在已赞状态。
 
----
+**为什么这个方案同时解决「暂停」和「特效」**：点击完全没有被碰，抖音看到的还是
+完整的双击，它的手势判定和特效都照常。
+
+**为什么顺带干掉了失败提示**：`LJJJJZ` 里除了回滚还会弹提示
+（`LX/1J8U.LJFF(resId, ctx, e)`）。整个跳过 = 用户什么都不知道。
+
+**已知限制**：服务端确实驳回了这次点赞，`Aweme.userDigg` 仍是未赞
+（我们改的是本地的 `diggSelected`，而且这里连它都不撤销）。
+所以下拉刷新、换一批视频之后，图标会按服务端数据恢复。
+这个方案保证的是「**点赞当下不回滚**」，不是「点赞成功了」。
+
+### 7.6 为什么 v1.13 的定位是错的（「挂上但从未命中」）
+
+v1.13 拦的是 `VideoDiggView.onEventDiggUpdate(LX/0tvw;)V`。它是一条**真实存在**的
+EventBus 订阅方法（带 `@Subscribe` 注解），命中后也确实会调
+`LJJIIJZLJL(Aweme, Z, Z)` 重刷视图。所以静态上看「像个收口点」。
+
+但它**只在跨页面同步点赞状态时才广播**（例如从聊天里点赞，通知 feed 里的视图更新）。
+驳回回滚走的是 `wq` → `LJJJJZ` 那条路，**跟这个事件毫无关系**。
+
+真机日志把这件事钉死了：
+
+```
+01:54:22.058 [digg] 已挂钩 onEventDiggUpdate(...)——驳回后不回滚   <- 挂上了
+01:54:27.413 [click*] 点击 android.widget.FrameLayout #0x7f0a309c    <- 用户点了赞
+(然后什么都没有)                                                      <- 一次都没命中
+```
+
+**把三种失败区分开，比任何单次修复都重要：**
+
+| 日志表现 | 含义 | 下一步 |
+|---|---|---|
+| 没有「已挂钩」这一行 | **没挂上**（类名/方法名变了） | 回 dex 里重新找类名 |
+| 有「已挂钩」、操作后无命中 | **挂上但从未命中** -> 拦截点选错了 | 顺着调用链找真正的出口 |
+| 有命中、但现象没变 | **命中但无效** -> 拦早了/拦晚了，或拦的不是那条路 | 换链路里另一个点 |
+
+v1.13 卡在第二类，而当时的代码只在「命中」时才打日志、挂载成功也打日志，
+唯独没有区分「挂了但没命中」——所以只能靠反复试。v1.14 给点赞链路加了
+三段诊断钩子（点击入口 / 发请求 / 回滚），下一轮日志就能直接指向答案。
 
 ## 8. 踩坑速查表
 
@@ -478,23 +609,48 @@ LJIIIZ(View view, boolean onlyScale, LX/1J8B diggUIConfig)V
 | 一个 `}` 多打 / 变量名笔误 / 函数改名漏改 | 改完代码先做括号平衡与符号引用的一致性检查，再推 CI |
 
 ---
+| DUX 吐司「唯一收口点」 | 写死一个方法名去拦，会被换实现绕过，改成「参数含 CharSequence/String」泛化扫描 |
+| 拦下的方法返回 null | 返回 `IDuxToastOperation` 的调用方之后会 `dismiss()` -> NPE。返回类型是接口时回一个空实现的动态代理 |
+| 横幅只拦「判定」方法 | 真正挂横幅的是另一个方法（`LJJJLZIJ`），只拦判定会被绕过 |
+| 拦截点选错（`onEventDiggUpdate`） | 静态分析给假设，**命中记录**才是结论。每个 hook 都要有命中日志，才能区分「没挂上 / 没命中 / 命中无效」 |
+| 开关按「实现层」拆 | 用户想消掉的是**现象**不是实现。四个开关描述同一件事 = 让用户做无意义的选择 |
+| 默认什么都不做的开关 | 「按控件 id 隐藏」默认列表是空的 = 纯占位开关，直接删 |
+| 「保存」按钮 + 手动词表 | 其它开关都是即时生效，只有词表要手动存，交互不一致；改成停顿 600ms 自动保存 |
 
 ## 9. 已知限制与待办
 
 ### 限制
 
-1. **本地点赞/拦截只在当下生效**：抖音的数据模型仍是「未点赞」（服务端驳回是事实），视图被 RecyclerView 回收重绑、或列表整体刷新时，图标会按模型刷回未点赞。除非把 aid 记下来在绑定时重新套用——需要定位「视图 ↔ aid」的映射，尚未实现。
-2. **资源 id 是 aapt 打包时分配的**，抖音升级后可能变化。这也是为什么所有能按类名的功能都不依赖 id。
-3. **无法拦截服务端请求**（TTNet/Cronet 原生栈），所以「让服务端真的接受点赞」做不到，只能改本地呈现。
-4. 签名每次 CI 现场生成 → 覆盖安装需先卸载。要固定签名需配置 `KEYSTORE_BASE64` 等 secret。
+1. **点赞只在「当次」不回滚**：服务端确实驳回了，`Aweme.userDigg` 仍是未赞，
+   下拉刷新 / 换一批之后图标会按服务端数据恢复。要跨刷新保持，得记住 aid 并在
+   列表绑定后重新套用 `diggSelected`，需要先定位「视图 ↔ aid」的映射，尚未实现。
+2. **无法拦截服务端请求**（TTNet/Cronet 原生栈），所以「让服务端真的接受点赞」做不到，
+   只能改本地呈现。
+3. **类名 / 方法名随版本变化**：v1.14 已经尽量不依赖资源 id（aapt 打包时分配，
+   升级就会变，而且可能被别的界面复用），但仍然依赖类名和方法名。
+   好在现在每条 hook 都会把挂载结果写进日志，便于定位。
+4. **聊天红叹号有固有副作用**：真·发送失败时用户也看不到提示，不知道要重发。
+5. 签名每次 CI 现场生成 -> 覆盖安装需先卸载。固定签名需配置 `KEYSTORE_BASE64` 等 secret。
 
 ### 待办
 
-1. 验证 §7.5 的「只拦回滚」方案
+1. **真机验证 v1.14 的点赞回滚拦截**：日志里应出现 `[digg] 拦下驳回回滚`。
+   如果没有，按 §7.6 的三分法先确认是「没挂上」还是「没命中」。
 2. 模块改名（候选：「无事发生」/「本账号一切正常」/「查无此封」/「风控未命中」/「幻觉」）
-3. 本地点赞的跨重绑保持
+3. 点赞跨刷新保持（见限制 1）
+4. 评论区的点赞如果也被驳回，`comment.ui.diggbury` 那条链可能要同样处理
 
----
+### 设置项迁移（v1.13 -> v1.14）
+
+| v1.13 | v1.14 |
+|---|---|
+| `block_toast` + `hide_im_ban_tips` + `hide_send_status` | `hide_tips` |
+| `toast_keywords` | `keywords`（读取时会回退到旧键，用户自己维护的词表不会丢） |
+| `hide_views` + `hide_view_ids` | 已移除 |
+| `sticky_digg` / `debug_log` | 不变 |
+
+三个旧布尔开关的默认值都是 `true`，合并后的 `hide_tips` 默认也是 `true`，
+所以没手动改过的用户行为完全一致。
 
 ## 10. 工程结构
 
@@ -503,37 +659,50 @@ app/src/main/
 ├── kotlin/io/github/jjmj/douyinunlimit/
 │   ├── App.kt                         Application，注册 XposedServiceHelper
 │   ├── data/
-│   │   ├── Prefs.kt                   键名 + 关键词解析 + 控件 id 解析
-│   │   ├── ModuleSettings.kt          设置数据类
+│   │   ├── Prefs.kt                   键名 + 关键词解析（含旧键回退）
+│   │   ├── ModuleSettings.kt          设置数据类（字段顺序 = 界面顺序）
 │   │   └── SettingsBridge.kt          连框架的远程配置（Compose state）
 │   ├── ui/                            Miuix 设置界面
 │   │   ├── MainActivity.kt
 │   │   ├── AppTheme.kt
-│   │   └── SettingsScreen.kt
+│   │   └── SettingsScreen.kt          四个开关；关键词停顿 600ms 自动保存
 │   └── xposed/
 │       ├── HookEntry.kt               模块入口（java_init.list 指定）
 │       ├── RuleSource.kt              热路径用的配置缓存（零分配）
 │       ├── Diag.kt                    两级日志 + 内存缓冲 + 只追加
 │       ├── ClickProbe.kt              点击探针（定位控件的利器）
-│       ├── ToastGuard.kt              吐司
-│       ├── ImBanGuard.kt              消息页横幅
-│       ├── SendStatusGuard.kt         聊天红叹号
-│       ├── TextGuard.kt               按关键词隐藏文字
-│       ├── ViewGuard.kt               按 id 隐藏（手动兜底）
-│       └── LocalDigg.kt               点赞不回滚
+│       ├── RestrictionGuard.kt        限制提示三合一（吐司 / 横幅 / 红叹号）
+│       ├── TextHider.kt               关键词文字 + 压住重新显示的控件
+│       └── LocalDigg.kt               点赞驳回后不回滚
 └── resources/META-INF/xposed/         module.prop / scope.list / java_init.list
 ```
 
+### v1.13 -> v1.14 的文件变化
+
+| 删除 | 去处 |
+|---|---|
+| `ToastGuard.kt` `ImBanGuard.kt` `SendStatusGuard.kt` | 合并为 `RestrictionGuard.kt` |
+| `TextGuard.kt` `BlockedViews.kt` | 合并为 `TextHider.kt` |
+| `ViewGuard.kt` | id 黑名单删掉；`setVisibility` 压制并入 `TextHider.kt` |
+| `NetGuard.kt` | 方案已证伪，整体删除 |
+| —— | 新增 `RuleSource.textHidingOn()` 统一热路径节流 |
+
 ### 功耗设计（`RuleSource`）
 
-配置会被 `setVisibility` / `setText` / `addView` 这类**每秒调用成千上万次**的热路径读取，所以热路径上**不能有任何 I/O、时间调用或对象分配**：
+配置会被 `setVisibility` / `setText` / `setText` 这类**每秒调用成千上万次**的热路径读取，
+所以热路径上**不能有任何 I/O、时间调用或对象分配**：
 
 - 所有配置缓存成 volatile 基本类型 / 数组，读取是纯内存访问
 - 用**调用计数器**而不是 `System.nanoTime()` 做节流（时间调用远贵于计数器自增）
-- 每 1024 次热路径调用才真正去读一次 SharedPreferences
+- **计数器刻意不用 `AtomicInteger`**：热点上 CAS 会跨线程争抢，而这里算错一两次
+  只意味着「晚一点同步」，没有任何正确性影响，普通 `Int` 最便宜
+- 每 1024 次热路径调用才真正读一次 SharedPreferences
 - 命中判定是纯数组扫描，无装箱、无字符串分配
+- `shouldBlockToast` 也改成读同一份缓存数组 —— v1.13 之前它每次调用都
+  `Keywords.parse(prefs.getString(...))`，也就是**每条吐司**都做一次字符串
+  split + List 分配 + 逐项 trim
 
----
+于是未命中时每次调用只有：读一个 volatile + 计数器自增 + 一次数组扫描。
 
 ## 11. 一条贯穿全程的方法论
 
