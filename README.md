@@ -6,7 +6,7 @@
 
 ## 致谢
 
-- "MIUIX" (https://github.com/compose-miuix-ui/miuix) — 提供 UI 组件与设计参考
+- [MIUIX](https://github.com/compose-miuix-ui/miuix) (Apache-2.0 License) - 提供 UI 组件与设计参考。
 
 ## 构建
 
