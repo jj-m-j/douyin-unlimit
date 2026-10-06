@@ -1,4 +1,4 @@
-package io.github.jjmj.douyinunlimit.data
+package io.github.jj_m_j.douyinunlimit.data
 
 /**
  * 模块 App 与注入进程共用的配置约定。

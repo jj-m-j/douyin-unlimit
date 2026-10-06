@@ -1,4 +1,4 @@
-package io.github.jjmj.douyinunlimit.data
+package io.github.jj_m_j.douyinunlimit.data
 
 /**
  * 模块的全部可配置项。字段顺序即设置页的展示顺序。

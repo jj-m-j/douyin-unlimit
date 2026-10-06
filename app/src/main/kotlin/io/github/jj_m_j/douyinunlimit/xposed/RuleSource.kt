@@ -1,8 +1,8 @@
-package io.github.jjmj.douyinunlimit.xposed
+package io.github.jj_m_j.douyinunlimit.xposed
 
 import android.content.SharedPreferences
-import io.github.jjmj.douyinunlimit.data.Keywords
-import io.github.jjmj.douyinunlimit.data.Prefs
+import io.github.jj_m_j.douyinunlimit.data.Keywords
+import io.github.jj_m_j.douyinunlimit.data.Prefs
 
 /**
  * 在注入进程里读取模块配置。

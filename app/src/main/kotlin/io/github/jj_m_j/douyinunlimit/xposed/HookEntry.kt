@@ -1,10 +1,10 @@
-package io.github.jjmj.douyinunlimit.xposed
+package io.github.jj_m_j.douyinunlimit.xposed
 
 import android.app.Application
 import android.content.SharedPreferences
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
-import io.github.jjmj.douyinunlimit.data.Prefs
+import io.github.jj_m_j.douyinunlimit.data.Prefs
 
 /**
  * 模块入口。由 META-INF/xposed/java_init.list 声明。

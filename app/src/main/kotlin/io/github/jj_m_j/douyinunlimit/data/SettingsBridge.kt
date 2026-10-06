@@ -1,4 +1,4 @@
-package io.github.jjmj.douyinunlimit.data
+package io.github.jj_m_j.douyinunlimit.data
 
 import android.content.SharedPreferences
 import android.util.Log

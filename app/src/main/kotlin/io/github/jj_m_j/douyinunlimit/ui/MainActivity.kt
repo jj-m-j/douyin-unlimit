@@ -1,4 +1,4 @@
-package io.github.jjmj.douyinunlimit.ui
+package io.github.jj_m_j.douyinunlimit.ui
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity

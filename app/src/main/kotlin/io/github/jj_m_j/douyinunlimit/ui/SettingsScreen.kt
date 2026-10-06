@@ -1,4 +1,4 @@
-package io.github.jjmj.douyinunlimit.ui
+package io.github.jj_m_j.douyinunlimit.ui
 
 import android.content.Context
 import android.content.Intent
@@ -22,8 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
-import io.github.jjmj.douyinunlimit.data.Keywords
-import io.github.jjmj.douyinunlimit.data.SettingsBridge
+import io.github.jj_m_j.douyinunlimit.data.Keywords
+import io.github.jj_m_j.douyinunlimit.data.SettingsBridge
 import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card

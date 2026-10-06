@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.jjmj.douyinunlimit"
+    namespace = "io.github.jj_m_j.douyinunlimit"
     // Miuix 0.9.4 的 AAR metadata 要求 minCompileSdk = 37
     compileSdk {
         version = release(37) {
@@ -13,7 +13,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.jjmj.douyinunlimit"
+        applicationId = "io.github.jj_m_j.douyinunlimit"
         minSdk = 29
         targetSdk = 37
         versionCode = 1

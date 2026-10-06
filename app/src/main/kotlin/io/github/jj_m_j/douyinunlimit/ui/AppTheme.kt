@@ -1,4 +1,4 @@
-package io.github.jjmj.douyinunlimit.ui
+package io.github.jj_m_j.douyinunlimit.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable

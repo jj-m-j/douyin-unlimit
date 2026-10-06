@@ -1,7 +1,7 @@
-package io.github.jjmj.douyinunlimit
+package io.github.jj_m_j.douyinunlimit
 
 import android.app.Application
-import io.github.jjmj.douyinunlimit.data.SettingsBridge
+import io.github.jj_m_j.douyinunlimit.data.SettingsBridge
 
 class App : Application() {
     override fun onCreate() {

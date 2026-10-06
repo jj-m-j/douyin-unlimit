@@ -1,4 +1,4 @@
-package io.github.jjmj.douyinunlimit.xposed
+package io.github.jj_m_j.douyinunlimit.xposed
 
 import java.lang.reflect.Constructor
 import java.lang.reflect.Field

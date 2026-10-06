@@ -1,4 +1,4 @@
-package io.github.jjmj.douyinunlimit.xposed
+package io.github.jj_m_j.douyinunlimit.xposed
 
 import android.content.Context
 import android.util.Log
